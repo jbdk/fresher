@@ -6,10 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"time"
-
-	"github.com/pilu/config"
 )
 
 const (
@@ -68,36 +65,6 @@ func logColor(logName string) string {
 	colorName := settings[settingsKey]
 
 	return colors[colorName]
-}
-
-func loadEnvSettings() {
-	for key, _ := range settings {
-		envKey := fmt.Sprintf("%s%s", envSettingsPrefix, strings.ToUpper(key))
-		if value := os.Getenv(envKey); value != "" {
-			settings[key] = value
-		}
-	}
-}
-
-func loadRunnerConfigSettings() {
-	if _, err := os.Stat(configPath()); err != nil {
-		return
-	}
-
-	logger.Printf("Loading settings from %s", configPath())
-	sections, err := config.ParseFile(configPath(), mainSettingsSection)
-	if err != nil {
-		return
-	}
-
-	for key, value := range sections[mainSettingsSection] {
-		settings[key] = value
-	}
-}
-
-func initSettings() {
-	loadEnvSettings()
-	loadRunnerConfigSettings()
 }
 
 func getenv(key, defaultValue string) string {

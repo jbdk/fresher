@@ -7,14 +7,15 @@ import (
 	"log"
 	"os"
 
-	"github.com/c9845/fresh/config"
-	"github.com/c9845/fresh/runner"
-	"github.com/c9845/fresh/version"
+	"github.com/c9845/fresher/config"
+	"github.com/c9845/fresher/runner2"
+	"github.com/c9845/fresher/version"
 )
 
 func main() {
 	//Handle flags.
 	configFilePath := flag.String("config", "./"+config.DefaultConfigFileName, "Full path to the configuration file.")
+	printConfig := flag.Bool("print-config", false, "Print the config file this app has loaded.")
 	showVersion := flag.Bool("version", false, "Shows the version of the app.")
 	flag.Parse()
 
@@ -28,8 +29,8 @@ func main() {
 
 	//Starting messages.
 	//Always show version number when starting for diagnostics.
-	log.Println("Starting Fresh...")
-	log.Println("Version:", version.V)
+	log.Println("Starting Fresher...")
+	log.Printf("Version: %s (Released: %s)\n", version.V, version.ReleaseDate)
 
 	//Read and parse the config file at the provided path. The config file provides
 	//runtime configuration of the app and contains settings that are rarely modified.
@@ -43,14 +44,16 @@ func main() {
 		return
 	}
 
-	if *configPath != "" {
-		if _, err := os.Stat(*configPath); err != nil {
-			fmt.Printf("Can't find config file `%s`\n", *configPath)
-			os.Exit(1)
-		} else {
-			os.Setenv("RUNNER_CONFIG_PATH", *configPath)
-		}
+	//Configure.
+	err = runner2.Configure()
+	if err != nil {
+		log.Fatal("Error during configure", err)
+		return
 	}
 
-	runner.Start()
+	//Watch for changes to files.
+	runner2.Watch()
+
+	//Run.
+	runner2.Start()
 }

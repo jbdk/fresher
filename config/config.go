@@ -1,38 +1,40 @@
 /*
-Package config handles configuration of the app. The configuration can simply be
-a default, or a config file can be provided. The config data is used for low-level
-settings of the app and can be used elsewhere in this app.
+Package config handles configuration of the app.
 
-The config file is in yaml format for easy readability. However, the file does not
-need to end in the yaml extension.
+A config is handled one of three ways:
+  - If a file exists at the path, it is attempted to be parsed as a valid config file.
+  - If a file does not exists at the path, the default config will be saved.
+  - If the path is blank, the default config is used.
+
+The config file is in yaml format for easy readability.
 
 This package must not import any other packages from within this app to prevent
 import loops (besides minor utility packages).
 
----
-
 When adding a new field to the config file:
   - Add the field to the File type below.
   - Determine any default value(s) for the field and set it in newDefaultConfig().
-  - Document the field as needed (README, other documentation).
   - Set validation in validate().
+  - Document the field as needed (README, other documentation).
 */
 package config
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/c9845/fresh/version"
+	"github.com/c9845/fresher/version"
+	"golang.org/x/exp/slices"
 	"gopkg.in/yaml.v2"
 )
 
 // DefaultConfigFileName is the typical name of the config file.
-const DefaultConfigFileName = "fresh.conf"
+const DefaultConfigFileName = "fresher.conf"
 
 // File defines the list of configuration fields. The value for each field will be
 // set by a default or read from a config file. The config file is typically stored
@@ -46,11 +48,13 @@ type File struct {
 	TempDir    string `yaml:"TempDir"`    //directory off of working directory to store temporary files
 
 	ExtensionsToWatch   []string `yaml:"ExtensionsToWatch"`   //files to watch for changes; .go, .html are most common.
-	NoRebuildExtensions []string `yaml:"NoRebuildExtensions"` //files to we watch to restart the binary on, but don't rebuild on.
-	IgnoredDirs         []string `yaml:"IgnoredDirs"`         //directories to ignore files in, files won't be watches for changes; .git, node_modules, temp, etc.
+	NoRebuildExtensions []string `yaml:"NoRebuildExtensions"` //files to we restart the binary on, but don't rebuild the binary.
+	DirectoriesToIgnore []string `yaml:"DirectoriesToIgnore"` //directories to ignore files in, files won't be watches for changes; .git, node_modules, temp, etc.
 
-	BuildDelayMilliseconds int64 //milliseconds to wait until triggering rebuild, to prevent rebuilding on "save" being trigger multiple times very quickly.
-
+	BuildDelayMilliseconds int64    //milliseconds to wait until triggering rebuild, to prevent rebuilding on "save" being trigger multiple times very quickly.
+	BuildName              string   `yaml:"BuildName"`        //name of binary when built
+	BuildLogFilename       string   `yaml:"BuildLogFilename"` //name of file in TempDir where build errors will be logged to
+	Tags                   []string `yaml:"Tags"`             //anything provided in go build tags (go build -tags asdf).
 }
 
 // parsedConfig is the data parsed from the config file. This data is stored so that
@@ -71,13 +75,16 @@ var (
 
 // newDefaultConfig returns a File with default values set for each field.
 func newDefaultConfig() (f File, err error) {
-	//Get path the command is being run in to use as default base path
-	currentWorkingDir, err := os.Getwd()
-	if err != nil {
-		return
+	f = File{
+		WorkingDir:             ".",
+		TempDir:                filepath.Join(".", "tmp"),
+		ExtensionsToWatch:      []string{"go", "html"},
+		NoRebuildExtensions:    []string{"html"},
+		DirectoriesToIgnore:    []string{"tmp", "node_modules", ".git"},
+		BuildDelayMilliseconds: 300,
+		BuildName:              "fresher-build",
+		BuildLogFilename:       "fresher-build-errors.log",
 	}
-
-	f = File{}
 	return
 }
 
@@ -85,6 +92,9 @@ func newDefaultConfig() (f File, err error) {
 // data is sanitized and validated. The print argument is used to print the config
 // as it was read/parsed and as it was understood after sanitizing, validating, and
 // handling default values.
+//
+// If a config file is not found at the given path, the default config is saved to
+// this path.
 //
 // The parsed configuration is stored in a local variable for access with the
 // Data() func. This is done so that the config file doesn't need to be reparsed
@@ -117,10 +127,6 @@ func Read(path string, print bool) (err error) {
 		if innerErr != nil {
 			return innerErr
 		}
-
-		//We don't get a random private key encryption key since if the app is
-		//started over and over without a config file path, the encryption key
-		//will be different each time and thus the private keys won't be usable.
 
 		//Save the config to this package for use elsewhere in the app.
 		parsedConfig = cfg
@@ -211,7 +217,7 @@ func (conf *File) write(path string) (err error) {
 
 	//Add some comments to config file so a human knows it was generated, not
 	//written by a human.
-	file.WriteString("#Generated config file for Fresh.\n")
+	file.WriteString("#Generated config file for Fresher.\n")
 	file.WriteString("#Generated at: " + time.Now().UTC().Format(time.RFC3339) + "\n")
 	file.WriteString("#Version: " + version.V + "\n")
 	file.WriteString("#This file is in YAML format.\n")
@@ -232,14 +238,94 @@ func (conf *File) validate() (err error) {
 		return
 	}
 
-	return
-}
+	//Make sure working directory is set. This should just be "." in most cases since
+	//the working directory is the directory where "fresher" is being run.
+	conf.WorkingDir = filepath.FromSlash(strings.TrimSpace(conf.WorkingDir))
+	if conf.WorkingDir == "" {
+		return errors.New("config: WorkingDir not set. Typically this should be set to \".\"")
+	}
 
-// returnErrRequired is a helper func to create a standardized error message for when
-// a required field doesn't have a value.  This helps clean up validate() and keep
-// error messages for required fields the same.
-func returnErrRequired(field string) error {
-	return errors.New("config: A value for the field " + field + " was not provided but is required")
+	//Make sure tmp directory exists.
+	conf.TempDir = filepath.FromSlash(strings.TrimSpace(conf.TempDir))
+	if conf.TempDir == "" {
+		conf.TempDir = defaults.TempDir
+		log.Println("WARNING! (config) TempDir not provided, defaulting to " + conf.TempDir + ".")
+	}
+	if err = os.MkdirAll(conf.TempDir, 0755); err != nil {
+		return fmt.Errorf("config: Could not create TempDir directory. %w", err)
+	}
+
+	//Sanitize each provided extension. This catches blanks. This also catches
+	//duplicates.
+	validExtensionsToWatch := []string{}
+	for _, extention := range conf.ExtensionsToWatch {
+		extention = strings.TrimSpace(extention)
+
+		if slices.Contains(validExtensionsToWatch, extention) {
+			log.Println("WARNING! (config) Duplicate extension " + extention + " in ExtensionsToWatch.")
+			continue
+		}
+
+		validExtensionsToWatch = append(validExtensionsToWatch, extention)
+	}
+	conf.ExtensionsToWatch = validExtensionsToWatch
+
+	validNoRebuildExtensionss := []string{}
+	for _, extention := range conf.NoRebuildExtensions {
+		extention = strings.TrimSpace(extention)
+
+		if slices.Contains(validNoRebuildExtensionss, extention) {
+			log.Println("WARNING! (config) Duplicate extension " + extention + " in NoRebuildExtensions.")
+			continue
+		}
+
+		validNoRebuildExtensionss = append(validNoRebuildExtensionss, extention)
+	}
+	conf.NoRebuildExtensions = validNoRebuildExtensionss
+
+	//Make sure at least one extension to watch was given. If no extensions were given,
+	//then we don't know what files to watch for changes!
+	if len(conf.ExtensionsToWatch) == 0 {
+		conf.ExtensionsToWatch = defaults.ExtensionsToWatch
+		log.Printf("WARNING! (config) ExtensionsToWatch not provided, defaulting to %s .", conf.ExtensionsToWatch)
+	}
+
+	//Make sure any directories to ignore actually exist off the working dir.
+	validDirectoriesToIgnore := []string{}
+	for _, dir := range conf.DirectoriesToIgnore {
+		//Sanitize.
+		dir = strings.TrimSpace(dir)
+		dir = filepath.Clean(dir)
+
+		//We don't check if a directory actually exists. Who cares if a directory
+		//listed in the config file doesn't actually exists in the repo.
+
+		if slices.Contains(validDirectoriesToIgnore, dir) {
+			log.Println("WARNING! (config) Duplicate directory " + dir + " in DirectoriesToIgnore.")
+			continue
+		}
+
+		validDirectoriesToIgnore = append(validDirectoriesToIgnore, dir)
+	}
+	conf.DirectoriesToIgnore = validDirectoriesToIgnore
+
+	//Validate some other stuff.
+	if conf.BuildDelayMilliseconds < 0 {
+		conf.BuildDelayMilliseconds = defaults.BuildDelayMilliseconds
+		log.Printf("WARNING! (config) BuildDelayMilliseconds must be greater then 0, defaulting to %d.", conf.BuildDelayMilliseconds)
+	}
+
+	if strings.TrimSpace(conf.BuildName) == "" {
+		conf.BuildName = defaults.BuildName
+		log.Println("WARNING! (config) BuildName was not given, defaulting to " + conf.BuildName + ".")
+	}
+
+	if strings.TrimSpace(conf.BuildLogFilename) == "" {
+		conf.BuildLogFilename = defaults.BuildLogFilename
+		log.Println("WARNING! (config) BuildLogFilename was not given, defaulting to " + conf.BuildLogFilename + ".")
+	}
+
+	return
 }
 
 // print logs out the configuration file. This is used for diagnostic purposes.
