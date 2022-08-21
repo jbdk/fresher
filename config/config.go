@@ -21,7 +21,6 @@ package config
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -75,9 +74,16 @@ var (
 
 // newDefaultConfig returns a File with default values set for each field.
 func newDefaultConfig() (f File, err error) {
+	//Base working directory is relative to where fresher has been called from. This
+	//is done, instead of using absolute path, so that in case the fresher.conf config
+	//file is saved to version control, no identifying information from an absolute
+	//path is saved. I.e.: if using absolute paths, the path to the working directory
+	//may be something like /users/johnsmith/.../fresher.conf, leaking the user's name.
+	workingDir := "."
+
 	f = File{
-		WorkingDir:             ".",
-		TempDir:                filepath.Join(".", "tmp"),
+		WorkingDir:             workingDir,
+		TempDir:                filepath.Join(workingDir, "tmp"),
 		ExtensionsToWatch:      []string{"go", "html"},
 		NoRebuildExtensions:    []string{"html"},
 		DirectoriesToIgnore:    []string{"tmp", "node_modules", ".git"},
@@ -102,14 +108,6 @@ func newDefaultConfig() (f File, err error) {
 func Read(path string, print bool) (err error) {
 	// log.Println("Provided config file path:", path, print)
 
-	//Get absolute path to config file. Absolute path is nicer for logging, diagnostics,
-	//and can prevent future issues.
-	absolutePath, err := filepath.Abs(path)
-	if err != nil {
-		return
-	}
-	path = absolutePath
-
 	//Handle path to config file.
 	// - If the path is blank, we just use the default config. An empty path
 	//   should not ever happen since the flag that provides the path has a
@@ -120,8 +118,6 @@ func Read(path string, print bool) (err error) {
 	//   not exist, create a default config at the given path.
 	// - If a file at the path does exist, parse it as a config file.
 	if strings.TrimSpace(path) == "" {
-		log.Println("Using default config; path to config file not provided.")
-
 		//Get default config.
 		cfg, innerErr := newDefaultConfig()
 		if innerErr != nil {
@@ -245,14 +241,11 @@ func (conf *File) validate() (err error) {
 		return errors.New("config: WorkingDir not set. Typically this should be set to \".\"")
 	}
 
-	//Make sure tmp directory exists.
+	//Make sure temp directory is somewhat valid looking.
 	conf.TempDir = filepath.FromSlash(strings.TrimSpace(conf.TempDir))
 	if conf.TempDir == "" {
 		conf.TempDir = defaults.TempDir
 		log.Println("WARNING! (config) TempDir not provided, defaulting to " + conf.TempDir + ".")
-	}
-	if err = os.MkdirAll(conf.TempDir, 0755); err != nil {
-		return fmt.Errorf("config: Could not create TempDir directory. %w", err)
 	}
 
 	//Sanitize each provided extension. This catches blanks. This also catches

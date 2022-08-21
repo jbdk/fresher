@@ -1,12 +1,20 @@
 /*
 Package runner2 handles building and running the binary when a file has been modified.
+
+How watching/building/running works:
+  - The directory tree starting at the root working directory is walked.
+  - If the directory is not ignored, it is continued to be walked.
+  - If a directory is not walked, a fsnotify watcher is set on the directory to watch
+    for changes to files within that directory.
+  - When a file change is recognized, the file is checked to see if it has a watched
+    extension. If yes, the binary is rebuilt and/or rerun as needed.
 */
 package runner2
 
 import (
-	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -33,8 +41,14 @@ var (
 
 // Define channels.
 var (
-	startChan chan string //fsnotify String formats the event e in the form "filename: DELETE|MODIFY|..."
-	stopChan  chan bool
+	//startChan captures events on file changes and causes the binary to be rebuilt.
+	//An fsnotify watcher event is sent to this channel.
+	//
+	//fsnotify String formats the event e in the form "filename: DELETE|MODIFY|..."
+	startChan = make(chan string, 1000)
+
+	//stopChan is for terminating the binary when fresher is killed.
+	stopChan = make(chan bool)
 )
 
 // Configure handles some system configuration before watching for file changes and
@@ -64,57 +78,80 @@ func Configure() (err error) {
 	buildLog = *log.New(os.Stderr, "build ", 0)
 	appLog = *log.New(os.Stderr, "app ", 0)
 
+	//Create the temp directory to store the build binary and error logs.
+	err = os.MkdirAll(config.Data().TempDir, 0755)
+	if err != nil {
+		return
+	}
+
+	//TODO: write file to temp directory explaining what it is for?
+	//TODO: add tmp directory to .gitignore.
+
 	return
 }
 
-var ErrSkipDir = errors.New("runner: skipping directory")
-
 // Watch handles watching files. This skips ignored directories and only watches for
 // changes on files with correct extensions per the config file field ExtensionsToWatch.
-func Watch() {
+func Watch() (err error) {
 	//Get root directory to start watching from. This is the working directory per the
 	//config file.
 	workingDir := config.Data().WorkingDir
 
-	//Walk the directory tree, checking if each file found should be watched.
-	filepath.Walk(workingDir, func(path string, f os.FileInfo, err error) error {
-		if f.IsDir() {
-			//Ignore directory if it is the temp dir where we store built binaries.
-			yes, err := isTempDir(path)
-			if err != nil {
-				return err
-			}
-			if yes {
-				//Returning error since WalkFunc requires an error to be returned.
-				return ErrSkipDir
-			}
+	//Walk the directory tree, checking if each directory found should be watched.
+	//WalkDir calls walk() on each directory found starting at the workingDir which
+	//is most likely ".". Each directory is compared against the list of ignored
+	//directories.
+	err = filepath.WalkDir(workingDir, walk)
+	if err != nil && err != fs.SkipDir {
+		return
+	}
 
-			//Ignore directory if it is in list of ignored directories.
-			//
-			//Ignored directories listed in config file are based off of the root of
-			//the repository which is also the WorkingDir in the config file. The path
-			//in the WalkFunc here is also based off of the WorkingDir, so therefore
-			//we can compare easily without having to handle absolute paths.
-			if isPathInIgnoredDirectory(path) {
-				//Returning error since WalkFunc requires an error to be returned.
-				mainLog.Println("Skipping dir", path)
-				return ErrSkipDir
-			} else {
-				//diagnostics
-				mainLog.Println("NOT SKIP DIR", path)
-			}
+	return
+}
 
-			//Watch for file changes in this directory.
-			watchDirectory(path)
-		}
-
+// walk is a WalkDirFunc that is called by WalkDir for each directory off of the root
+// working directory. This sets watchers on each directory found for noticing file
+// changes and thus causing the binary to be rebuilt.
+func walk(path string, d fs.DirEntry, err error) error {
+	if err != nil {
 		return err
-	})
+	}
+
+	//Only watch directories, not individual files.
+	if !d.IsDir() {
+		return nil
+	}
+
+	//Ignore directory if it is the temp directory where built binaries are stored
+	//before running.
+	yes, err := isTempDir(path)
+	if err != nil {
+		return err
+	}
+	if yes {
+		return fs.SkipDir
+	}
+
+	//Ignore directory if it is in list of ignored directories.
+	//
+	//Ignored directories listed in config file are based off of the root of
+	//the repository which is also the WorkingDir in the config file. The path
+	//in the WalkFunc here is also based off of the WorkingDir, so therefore
+	//we can compare easily without having to handle absolute paths.
+	if isPathInIgnoredDirectories(path) {
+		//Returning error since WalkFunc requires an error to be returned.
+		return fs.SkipDir
+	}
+
+	//Watch for file changes in this directory.
+	watchDirectory(path)
+
+	return nil
 }
 
 // isTempDir checks if a given path is the path the the temporary directory where we
 // store built binaries. Ignore directory if it is the temp dir where we store built
-// binaries.
+// binaries since this directory should not store any source code.
 func isTempDir(path string) (yes bool, err error) {
 	fullWalkPath, err := filepath.Abs(path)
 	if err != nil {
@@ -132,9 +169,15 @@ func isTempDir(path string) (yes bool, err error) {
 	return false, nil
 }
 
-// isPathInIgnoredDirectory checks if path is within DirectoriesToIgnore.
-func isPathInIgnoredDirectory(path string) bool {
-	return slices.Contains(config.Data().DirectoriesToIgnore, path)
+// isPathInIgnoredDirectories checks if path is within DirectoriesToIgnore.
+func isPathInIgnoredDirectories(path string) bool {
+	for _, d := range config.Data().DirectoriesToIgnore {
+		if strings.HasPrefix(path, d) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // watchDirectory sets up fsnotify watchers for each file within a directory. This is
@@ -149,11 +192,13 @@ func watchDirectory(path string) {
 	}
 
 	//Set up events to watch for.
-	//watcher.Event.Name returns the path and name of a file.
+	//watcher.Event Name returns the path and name of a file.
 	go func() {
 		for {
 			select {
 			case ev := <-watcher.Event:
+				//We only care for events on file extensions we watch for. These
+				//extensions are set in the config file field ExtensionsToWatch.
 				if isWatchedFile(ev.Name) {
 					watchLog.Printf("Sending event %s", ev)
 					startChan <- ev.String()
@@ -304,7 +349,7 @@ func shouldRebuild(eventName string) bool {
 
 	//Check if filename has an extension that rebuilding should be skipped.
 	extension := filepath.Ext(fileName)
-	return slices.Contains(config.Data().NoRebuildExtensions, extension)
+	return !slices.Contains(config.Data().NoRebuildExtensions, extension)
 }
 
 // build builds the binary. This runs `go build` and outputs a binary to the temp
@@ -318,7 +363,6 @@ func build() (string, bool) {
 	//Create name of output binary. The temp path is added to this since that is
 	//where we store the built binary.
 	pathToBuiltBinary := getPathToBuiltBinary()
-	mainLog.Println("Saving binary to:", pathToBuiltBinary)
 
 	//Get path to entry point of app. This is typically just the repository root.
 	//Not naming a single "main.go" file allows for using any .go filename as the
@@ -421,7 +465,6 @@ func run() bool {
 
 	//Get path to built binary.
 	pathToBuiltBinary := getPathToBuiltBinary()
-	mainLog.Println("Running binary at:", pathToBuiltBinary)
 
 	//Set up logging for when the command runs. We want to capture the output logging
 	//and output it to the user running fresher. This is so the user can see any output

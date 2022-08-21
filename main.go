@@ -14,7 +14,7 @@ import (
 
 func main() {
 	//Handle flags.
-	configFilePath := flag.String("config", "./"+config.DefaultConfigFileName, "Full path to the configuration file.")
+	configFilePath := flag.String("config", "", "Full path to the configuration file.")
 	printConfig := flag.Bool("print-config", false, "Print the config file this app has loaded.")
 	showVersion := flag.Bool("version", false, "Shows the version of the app.")
 	flag.Parse()
@@ -47,12 +47,16 @@ func main() {
 	//Configure.
 	err = runner2.Configure()
 	if err != nil {
-		log.Fatal("Error during configure", err)
+		log.Fatal("Error with configure", err)
 		return
 	}
 
 	//Watch for changes to files.
-	runner2.Watch()
+	err = runner2.Watch()
+	if err != nil {
+		log.Fatal("Error with watch", err)
+		return
+	}
 
 	//Run.
 	runner2.Start()
