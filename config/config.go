@@ -227,7 +227,7 @@ func (conf *File) write(path string) (err error) {
 
 	//Add some comments to config file so a human knows it was generated, not
 	//written by a human.
-	file.WriteString("#Generated config file for Fresher.\n")
+	file.WriteString("#Generated config file for fresher.\n")
 	file.WriteString("#Generated at: " + time.Now().UTC().Format(time.RFC3339) + "\n")
 	file.WriteString("#Version: " + version.V + "\n")
 	file.WriteString("#This file is in YAML format.\n")

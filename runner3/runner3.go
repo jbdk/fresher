@@ -14,7 +14,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,12 +27,10 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// Define loggers. Multiple loggers because of prefixes on log lines for easier
-// reading of logs and diagnosing of errors.
-var (
-	fresherLog log.Logger //anything fresher related.
-	appLog     log.Logger //anything built binary related.
-)
+// Define log for anything fresher related. This logging output is controlled by
+// fresher, prefixed, and colored so it stands out from logging output from the
+// binary being build/run.
+var fresherLog *coloredLogger
 
 // Define communication channels.
 var (
@@ -58,11 +55,8 @@ var (
 // Configure handles some initialization steps before watching for file changes and
 // handling building and running the binary.
 func Configure() (err error) {
-	//Set up the logging. Multiple loggers based on what is writing to logs. This was
-	//done because `fresh` used multiple loggers, each with different colors. We remove
-	//the colors but keep the prefixed logs for easier identifying of log lines.
-	fresherLog = *log.New(os.Stderr, "fresher ", 0)
-	appLog = *log.New(os.Stderr, "app ", 0)
+	//Set up the logging.
+	fresherLog = newLogger("fresher", "blue")
 
 	//Set the number of maximum file descriptors that can be opened by this process.
 	//This is needed for watching a HUGE amount of files. Windows is not applicable.
@@ -136,6 +130,10 @@ func Watch() (err error) {
 		//WalkDirFunc here is also based off of the WorkingDir, so therefore we can
 		//easily compare without having to handle absolute paths.
 		if config.IsDirectoryToIgnore(path) {
+			if config.Data().VerboseLogging {
+				fresherLog.Println("IGNORING...", path)
+			}
+
 			return fs.SkipDir
 		}
 
@@ -179,7 +177,7 @@ func Watch() (err error) {
 				}
 
 				if config.Data().VerboseLogging {
-					fresherLog.Printf("SENDING EVENT...(%s) %s", eventType, eventName)
+					fresherLog.Println("SENDING EVENT...", eventType, eventName)
 				}
 
 				eventsChan <- eventName
@@ -540,8 +538,8 @@ func run() {
 
 	//Copy output from the command to output from fresher. This way the output from
 	//the binary is displayed to the user in real time.
-	go io.Copy(appLog.Writer(), stderr)
-	go io.Copy(appLog.Writer(), stdout)
+	go io.Copy(os.Stderr, stderr)
+	go io.Copy(os.Stdout, stdout)
 
 	//Stop the running binary if it has been rebuilt and will be rerun. This prevents
 	//multiple built binaries from running at one time.
