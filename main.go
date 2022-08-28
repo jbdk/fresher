@@ -8,13 +8,14 @@ import (
 	"os"
 
 	"github.com/c9845/fresher/config"
-	"github.com/c9845/fresher/runner2"
+	"github.com/c9845/fresher/runner3"
 	"github.com/c9845/fresher/version"
 )
 
 func main() {
 	//Handle flags.
-	configFilePath := flag.String("config", "", "Full path to the configuration file.")
+	createConfig := flag.Bool("init", false, "Create a default configuration file in the current directory.")
+	configFilePath := flag.String("config", "./"+config.DefaultConfigFileName, "Full path to the configuration file.")
 	printConfig := flag.Bool("print-config", false, "Print the config file this app has loaded.")
 	showVersion := flag.Bool("version", false, "Shows the version of the app.")
 	flag.Parse()
@@ -32,6 +33,19 @@ func main() {
 	log.Println("Starting Fresher...")
 	log.Printf("Version: %s (Released: %s)\n", version.V, version.ReleaseDate)
 
+	//Check if user wants to create a default config file.
+	if *createConfig {
+		err := config.CreateDefaultConfig()
+		if err != nil {
+			log.Fatalln("Could not create default config file.", err)
+			return
+		}
+
+		//Exit after creating default config to user can remove the -init flag.
+		os.Exit(0)
+		return
+	}
+
 	//Read and parse the config file at the provided path. The config file provides
 	//runtime configuration of the app and contains settings that are rarely modified.
 	// - If the --config flag is blank, the default value, a default config is used.
@@ -44,20 +58,22 @@ func main() {
 		return
 	}
 
+	//Diagnostics.
+	if config.Data().VerboseLogging {
+		log.Println("Watching extensions:", config.Data().ExtensionsToWatch)
+		log.Println("Ignoring directories:", config.Data().DirectoriesToIgnore)
+	}
+
 	//Configure.
-	err = runner2.Configure()
+	err = runner3.Configure()
 	if err != nil {
 		log.Fatal("Error with configure", err)
 		return
 	}
 
 	//Watch for changes to files.
-	err = runner2.Watch()
-	if err != nil {
-		log.Fatal("Error with watch", err)
-		return
-	}
+	runner3.Watch()
 
 	//Run.
-	runner2.Start()
+	runner3.Start()
 }
