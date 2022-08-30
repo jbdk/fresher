@@ -14,6 +14,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,11 +27,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/exp/slices"
 )
-
-// Define log for anything fresher related. This logging output is controlled by
-// fresher, prefixed, and colored so it stands out from logging output from the
-// binary being build/run.
-var fresherLog *coloredLogger
 
 // Define communication channels.
 var (
@@ -55,8 +51,10 @@ var (
 // Configure handles some initialization steps before watching for file changes and
 // handling building and running the binary.
 func Configure() (err error) {
-	//Set up the logging.
-	fresherLog = newLogger("fresher", "blue")
+	//Set up logging.
+	events = newLogger("fresher", "blue")
+	other = newLogger("fresher", "yellow")
+	errs = newLogger("fresher", "red")
 
 	//Set the number of maximum file descriptors that can be opened by this process.
 	//This is needed for watching a HUGE amount of files. Windows is not applicable.
@@ -66,7 +64,7 @@ func Configure() (err error) {
 		rLimit.Cur = 10000
 		err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
 		if err != nil {
-			fresherLog.Println("Configure", "Error setting rlimit.", err)
+			events.Printf("Error setting rlimit. %s", err)
 			return
 		}
 	}
@@ -77,8 +75,11 @@ func Configure() (err error) {
 		return
 	}
 
-	//TODO: write file to temp directory explaining what it is for?
-	//TODO: add tmp directory to .gitignore?
+	//Debug logging.
+	if config.Data().VerboseLogging {
+		other.Printf("Watching extensions: %s", config.Data().ExtensionsToWatch)
+		other.Printf("Ignoring directories: %s", config.Data().DirectoriesToIgnore)
+	}
 
 	return
 }
@@ -131,7 +132,7 @@ func Watch() (err error) {
 		//easily compare without having to handle absolute paths.
 		if config.IsDirectoryToIgnore(path) {
 			if config.Data().VerboseLogging {
-				fresherLog.Println("IGNORING...", path)
+				other.Printf("IGNORING... %s", path)
 			}
 
 			return fs.SkipDir
@@ -139,7 +140,7 @@ func Watch() (err error) {
 
 		//Add path to watcher.
 		if config.Data().VerboseLogging {
-			fresherLog.Println("Watching...", path)
+			events.Printf("Watching... %s", path)
 		}
 		err = watcher.Add(path)
 		return err
@@ -157,7 +158,7 @@ func Watch() (err error) {
 			select {
 			case err := <-watcher.Errors:
 				if err != nil {
-					fresherLog.Println("watcher error", err)
+					errs.Printf("watcher error %s", err)
 				}
 
 			case event := <-watcher.Events:
@@ -177,7 +178,7 @@ func Watch() (err error) {
 				}
 
 				if config.Data().VerboseLogging {
-					fresherLog.Println("SENDING EVENT...", eventType, eventName)
+					events.Printf("SENDING EVENT... %s %s", eventType, eventName)
 				}
 
 				eventsChan <- eventName
@@ -219,7 +220,7 @@ func start() {
 		for {
 			//Get event.
 			eventName := <-eventsChan
-			fresherLog.Println("GOT EVENT...", eventName)
+			events.Printf("GOT EVENT... %s", eventName)
 
 			//Track if build is successful so we know to stop watching and building.
 			buildFailed := false
@@ -244,7 +245,7 @@ func start() {
 				//Clear the error log since we are rebuilding the binary.
 				err := deleteBuildErrorsLog()
 				if err != nil && !os.IsNotExist(err) {
-					fresherLog.Println("Error deleting build log.", err)
+					errs.Printf("Error deleting build log %s", err)
 					//not exiting on error since this isn't an end-of-the-world event.
 				}
 
@@ -252,14 +253,10 @@ func start() {
 				err = build()
 				if err == errBuildKilled {
 					buildKilled = true
-
-					if config.Data().VerboseLogging {
-						fresherLog.Println("BUILD KILLED, BUILD WILL BE RERUN...")
-					}
 				} else if err != nil {
 					buildFailed = true
 
-					fresherLog.Println("Build Failed", err)
+					errs.Printf("Build Failed %s", err)
 					if !started {
 						//Build failed and the binary never stared running, exit fresher.
 						//This should only occur when fresher just starts and builds
@@ -284,7 +281,7 @@ func start() {
 
 				//Add logging line to separate fresher logging output from built
 				//binary's logging output.
-				fresherLog.Println(strings.Repeat("-", 50))
+				events.Printf(strings.Repeat("-", 50))
 			}
 
 			//Note that binary is started. This way if a subsequent build fails, the
@@ -327,13 +324,16 @@ func shouldRebuild(eventName string) bool {
 // file change event occurs and determines if a message is sent on the killBuildingChan.
 var buildCmdRunning bool = false
 
-// errBuildFailed is returned by build() when a build fails.
-var errBuildFailed = errors.New("build failed")
+// errors returned from build()
+var (
+	//errBuildFailed is returned when a build fails.
+	errBuildFailed = errors.New("build failed")
 
-// errBuildKilled is returned by build() when a build is killed in the middle of
-// building due to a message on the killBuildingChan channel. This isn't really an
-// error since the binary will just be rebuilt (similar error in usage as fs.SkipDir).
-var errBuildKilled = errors.New("build killed")
+	//errBuildKilled is returned when a build is killed in the middle of building due
+	//to a message on the killBuildingChan channel. This isn't really an error since
+	//the binary will just be rebuilt (similar error in usage as fs.SkipDir).
+	errBuildKilled = errors.New("build killed")
+)
 
 // build builds the binary. This runs `go build` and outputs a binary to the temp
 // directory noted in the config file.
@@ -347,33 +347,40 @@ func build() (err error) {
 	//temp directory.
 	pathToBuiltBinary := getPathToBuiltBinary()
 
-	//Get path to entry point of app. This is typically just the repository root.
-	//Not naming a single "main.go" file allows for using any .go filename as the
-	//entry point, and using multiple .go files at once; go build figures this all
-	//out.
-	entryPoint := config.Data().WorkingDir
-
 	//Build arguments passed to "go" command.
 	args := []string{
 		"build",
 		"-o", pathToBuiltBinary,
 	}
 
-	//Handle build tags.
+	//Handle other go build flags.
 	if len(config.Data().GoBuildTags) > 0 {
-		tags := strings.Join(config.Data().GoBuildTags, " ")
-		args = append(args, "-tags", tags)
+		args = append(args, "-tags", config.Data().GoBuildTags)
 	}
-	args = append(args, entryPoint)
 
-	//TODO: handle other go build flags.
+	if len(config.Data().GoBuildLdflags) > 0 {
+		args = append(args, "-ldflags", config.Data().GoBuildLdflags)
+	}
+
+	if config.Data().GoBuildTrimpath {
+		args = append(args, "-trimpath")
+	}
+
+	//Get path to entry point of app. This is typically just the repository root.
+	//Not naming a single "main.go" file allows for using any .go filename as the
+	//entry point, and using multiple .go files at once; go build figures this all
+	//out.
+	entryPoint := config.Data().WorkingDir
+
+	//Add the entry point to build the binary from.
+	args = append(args, entryPoint)
 
 	//Initialize the command, but do not run it.
 	cmd := exec.Command("go", args...)
 	if config.Data().VerboseLogging {
-		fresherLog.Println("Building...", "go", strings.Join(args, " "))
+		events.Printf("Building... %s %s", "go", strings.Join(args, " "))
 	} else {
-		fresherLog.Println("Building...")
+		events.Printf("Building...")
 	}
 
 	//Set up logging for when the command runs. We want to capture the output logging
@@ -405,11 +412,11 @@ func build() (err error) {
 		select {
 		case x := <-killBuildingChan:
 			if x {
-				fresherLog.Println("Building...killed")
+				events.Printf("Building...killed")
 
 				err := cmd.Process.Kill()
 				if err != nil {
-					fresherLog.Println("Killing build error", err)
+					errs.Printf("Killing build error %s", err)
 				}
 
 				buildKilled = true
@@ -440,7 +447,7 @@ func build() (err error) {
 	//reading in terminal output.
 	errBuf, err := io.ReadAll(stderr)
 	if err != nil {
-		fresherLog.Println("Error capturing stderr", err)
+		errs.Printf("Error capturing stderr %s", err)
 	}
 
 	//Wait for command to finish. Have to handle build being killed by us!
@@ -489,7 +496,7 @@ func saveBuildErrorsLog(message string) {
 	//Create the file.
 	f, err := os.Create(pathToFile)
 	if err != nil {
-		fresherLog.Println("Could not create log file", err)
+		errs.Printf("Could not create log file %s", err)
 		//not exiting on error since we don't do anything with error anyway.
 	}
 	defer f.Close()
@@ -497,7 +504,7 @@ func saveBuildErrorsLog(message string) {
 	//Write to file
 	_, err = f.WriteString(message)
 	if err != nil {
-		fresherLog.Println("Could not write log file", err)
+		errs.Printf("Could not write log file %s", err)
 		//not exiting on error since we don't do anything with error anyway.
 	}
 }
@@ -512,9 +519,9 @@ func run() {
 	//Initialize the command, but do not run it.
 	cmd := exec.Command(pathToBuiltBinary)
 	if config.Data().VerboseLogging {
-		fresherLog.Println("Running...", pathToBuiltBinary)
+		events.Printf("Running... %s", pathToBuiltBinary)
 	} else {
-		fresherLog.Println("Running...")
+		events.Printf("Running...")
 	}
 
 	//Set up logging for when the command runs. We want to capture the output logging
@@ -522,18 +529,18 @@ func run() {
 	//from running the binary to diagnose issues.
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		fresherLog.Fatalln(err)
+		log.Fatalln(err)
 	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		fresherLog.Fatalln(err)
+		log.Fatalln(err)
 	}
 
 	//Run the command/binary.
 	err = cmd.Start()
 	if err != nil {
-		fresherLog.Fatalln(err)
+		log.Fatalln(err)
 	}
 
 	//Copy output from the command to output from fresher. This way the output from

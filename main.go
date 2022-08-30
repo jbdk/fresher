@@ -28,11 +28,6 @@ func main() {
 		return
 	}
 
-	//Starting messages.
-	//Always show version number when starting for diagnostics.
-	log.Println("Starting Fresher...")
-	log.Printf("Version: %s (Released: %s)\n", version.V, version.ReleaseDate)
-
 	//Check if user wants to create a default config file.
 	if *createConfig {
 		err := config.CreateDefaultConfig()
@@ -56,12 +51,6 @@ func main() {
 	if err != nil {
 		log.Fatalln("Could not parse config file.", errors.Unwrap(err))
 		return
-	}
-
-	//Diagnostics.
-	if config.Data().VerboseLogging {
-		log.Println("Watching extensions:", config.Data().ExtensionsToWatch)
-		log.Println("Ignoring directories:", config.Data().DirectoriesToIgnore)
 	}
 
 	//Configure.

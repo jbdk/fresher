@@ -26,6 +26,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -57,12 +58,18 @@ type File struct {
 	NoRebuildExtensions []string `yaml:"NoRebuildExtensions"` //files to we restart the binary on, but don't rebuild the binary.
 	DirectoriesToIgnore []string `yaml:"DirectoriesToIgnore"` //directories to ignore files in, files won't be watches for changes; .git, node_modules, temp, etc.
 
-	BuildDelayMilliseconds int64    //milliseconds to wait until triggering rebuild, to prevent rebuilding on "save" being trigger multiple times very quickly.
-	BuildName              string   `yaml:"BuildName"`        //name of binary when built
-	BuildLogFilename       string   `yaml:"BuildLogFilename"` //name of file in TempDir where build errors will be logged to
-	GoBuildTags            []string `yaml:"GoBuildTags"`      //anything provided in go build tags (go build -tags asdf).
+	BuildDelayMilliseconds int64  `yaml:"BuildDelayMilliseconds"` //milliseconds to wait until triggering rebuild, to prevent rebuilding on "save" being trigger multiple times very quickly.
+	BuildName              string `yaml:"BuildName"`              //name of binary when built
+	BuildLogFilename       string `yaml:"BuildLogFilename"`       //name of file in TempDir where build errors will be logged to
+	GoBuildTags            string `yaml:"GoBuildTags"`            //anything provided in go build -tags.
+	GoBuildLdflags         string `yaml:"GoBuildLdflags"`         //anything provided in go build -ldflags, see https://pkg.go.dev/cmd/link for possible options.
+	GoBuildTrimpath        bool   `yaml:"GoBuildTrimpath"`        //if -trimpath should be set on go build, see https://pkg.go.dev/cmd/go#:~:text=but%20still%20recognized.)%0A%2D-,trimpath,-remove%20all%20file
 
 	VerboseLogging bool `yaml:"VerboseLogging"` //log more diagnostic info from fresher
+
+	//usingBuiltInDefaults is set to true only when File isn't actually read from a
+	//file and we are using the built in defaults instead.
+	usingBuiltInDefaults bool `yaml:"-"`
 }
 
 // parsedConfig is the data parsed from the config file. This data is stored so that
@@ -89,6 +96,9 @@ func newDefaultConfig() (f File) {
 		BuildDelayMilliseconds: 300,
 		BuildName:              "fresher-build",
 		BuildLogFilename:       "fresher-build-errors.log",
+		GoBuildTags:            "",
+		GoBuildLdflags:         "-s -w", //probably unnecessary since the built binary shouldn't be used for production or distribution.
+		GoBuildTrimpath:        true,    //probably unnecessary since the built binary shouldn't be used for production or distribution.
 		VerboseLogging:         false,
 	}
 	return
@@ -145,15 +155,17 @@ func Read(path string, print bool) (err error) {
 	if strings.TrimSpace(path) == "" {
 		//Get default config.
 		cfg := newDefaultConfig()
+		cfg.usingBuiltInDefaults = true
 
 		//Save the config to this package for use elsewhere in the app.
 		parsedConfig = cfg
 
 	} else if _, err = os.Stat(path); os.IsNotExist(err) {
-		log.Printf("WARNING! (config) Config file not found at %s, use -init flag to create it, using built-in defaults.", path)
+		// log.Printf("WARNING! (config) Config file not found at %s, use -init flag to create it, using built-in defaults.", path)
 
 		//Get default config.
 		cfg := newDefaultConfig()
+		cfg.usingBuiltInDefaults = true
 
 		//Save the config to this package for use elsewhere in the app.
 		parsedConfig = cfg
@@ -162,7 +174,7 @@ func Read(path string, print bool) (err error) {
 		err = nil
 
 	} else {
-		log.Println("Using config from file:", path)
+		// log.Println("Using config from file:", path)
 
 		//Read the file at the path.
 		f, innerErr := os.ReadFile(path)
@@ -201,7 +213,7 @@ func Read(path string, print bool) (err error) {
 	//config path was blank and a default config was used instead.
 	//Always exit at this point since printing config is just for diagnostics.
 	if print {
-		log.Println("***PRINTING CONFIG AS UNDERSTOOD BY APP***")
+		log.Println("***PRINTING CONFIG AS UNDERSTOOD BY FRESHER***")
 		parsedConfig.print(path)
 		os.Exit(0)
 		return
@@ -344,12 +356,27 @@ func (conf *File) validate() (err error) {
 // This will show all fields from the File struct, even fields that the provided
 // config file omitted (except nonPublishedFields).
 func (conf File) print(path string) {
-	//Full path to the config file, so if file is in same directory as the
-	//executable and -config flag was not provided we still get the complete path.
-	pathAbs, _ := filepath.Abs(path)
+	//Don't print paths when the default built-in config is in use. There aren't any
+	//paths since config wasn't read from file!
+	if !conf.usingBuiltInDefaults {
+		//Full path to the config file, so if file is in same directory as the
+		//executable and -config flag was not provided we still get the complete path.
+		pathAbs, _ := filepath.Abs(path)
 
-	log.Println("Path to config file (flag):", path)
-	log.Println("Path to config file (absolute):", pathAbs)
+		log.Println("Path to config file (flag):", path)
+		log.Println("Path to config file (absolute):", pathAbs)
+	}
+
+	//Print out config file stuff (actually from parsed struct).
+	x := reflect.ValueOf(&conf).Elem()
+	typeOf := x.Type()
+	for i := 0; i < x.NumField(); i++ {
+		if typeOf.Field(i).IsExported() {
+			fieldName := typeOf.Field(i).Name
+			value := x.Field(i).Interface()
+			log.Println(fieldName+":", value)
+		}
+	}
 }
 
 // Data returns the full parsed config file data
