@@ -354,15 +354,15 @@ func build() (err error) {
 	}
 
 	//Handle other go build flags.
-	if len(config.Data().GoBuildTags) > 0 {
-		args = append(args, "-tags", config.Data().GoBuildTags)
+	if len(config.Data().GoTags) > 0 {
+		args = append(args, "-tags", config.Data().GoTags)
 	}
 
-	if len(config.Data().GoBuildLdflags) > 0 {
-		args = append(args, "-ldflags", config.Data().GoBuildLdflags)
+	if len(config.Data().GoLdflags) > 0 {
+		args = append(args, "-ldflags", config.Data().GoLdflags)
 	}
 
-	if config.Data().GoBuildTrimpath {
+	if config.Data().GoTrimpath {
 		args = append(args, "-trimpath")
 	}
 

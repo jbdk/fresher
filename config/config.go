@@ -1,13 +1,14 @@
 /*
 Package config handles configuration of the app.
 
+The config file is in yaml format for easy readability.
+Create a default config file in the current working directory using the -init flag.
+
 A config is handled one of three ways:
   - If a file exists at the path, it is attempted to be parsed as a valid config file.
   - If a file does not exists at the path, the built-in defaults are used after a
     warning is shown about the missing file.
   - If the path is blank, the default config is used.
-
-The config file is in yaml format for easy readability.
 
 This package must not import any other packages from within this repo to prevent
 import loops (besides minor utility packages) since the config package is most likely
@@ -51,21 +52,69 @@ const DefaultConfigFileName = "fresher.conf"
 // the struct field names, then we wouldn't be able to access those fields in other
 // packages.
 type File struct {
-	WorkingDir string `yaml:"WorkingDir"` //path to working directory.
-	TempDir    string `yaml:"TempDir"`    //directory off of working directory to store temporary files
+	//WorkingDir is the path to the working directory, the directory `go run` or
+	//`go build` would be executed in.
+	WorkingDir string `yaml:"WorkingDir"`
 
-	ExtensionsToWatch   []string `yaml:"ExtensionsToWatch"`   //files to watch for changes; .go, .html are most common.
-	NoRebuildExtensions []string `yaml:"NoRebuildExtensions"` //files to we restart the binary on, but don't rebuild the binary.
-	DirectoriesToIgnore []string `yaml:"DirectoriesToIgnore"` //directories to ignore files in, files won't be watches for changes; .git, node_modules, temp, etc.
+	//TempDir is the directory off of WorkingDir where fresher will store the built
+	//binary, that will be run, and error logs.
+	TempDir string `yaml:"TempDir"`
 
-	BuildDelayMilliseconds int64  `yaml:"BuildDelayMilliseconds"` //milliseconds to wait until triggering rebuild, to prevent rebuilding on "save" being trigger multiple times very quickly.
-	BuildName              string `yaml:"BuildName"`              //name of binary when built
-	BuildLogFilename       string `yaml:"BuildLogFilename"`       //name of file in TempDir where build errors will be logged to
-	GoBuildTags            string `yaml:"GoBuildTags"`            //anything provided in go build -tags.
-	GoBuildLdflags         string `yaml:"GoBuildLdflags"`         //anything provided in go build -ldflags, see https://pkg.go.dev/cmd/link for possible options.
-	GoBuildTrimpath        bool   `yaml:"GoBuildTrimpath"`        //if -trimpath should be set on go build, see https://pkg.go.dev/cmd/go#:~:text=but%20still%20recognized.)%0A%2D-,trimpath,-remove%20all%20file
+	//ExtensionsToWatch is the list of file extensions to watch for changes, typically
+	//.go and .html (if building a web app).
+	ExtensionsToWatch []string `yaml:"ExtensionsToWatch"`
 
-	VerboseLogging bool `yaml:"VerboseLogging"` //log more diagnostic info from fresher
+	//NoRebuildExtensions is the list of extensions that the binary will be restarted
+	//on when file changes occur, but the binary won't be rebuilt. Any extension
+	//listed here should, obviously, be listed in ExtensionsToWatch as well.
+	//
+	//For example, if an .html file is changed, the binary would need to be restarted
+	//since HTML files are typically stored in memory (using html/templates) when the
+	//binary is first started.
+	NoRebuildExtensions []string `yaml:"NoRebuildExtensions"`
+
+	//DirectoriesToIgnore is the list of directories that won't be watched for file
+	//change events. Typically directories such as .git, node_modules, etc.
+	DirectoriesToIgnore []string `yaml:"DirectoriesToIgnore"`
+
+	//BuildDelayMilliseconds is the delay between a file change event occuring and
+	//`go build` being run. This delay is helpful to prevent unnecessary buildng when
+	//multiple file change events occur in quick succession.
+	//
+	//This was inherited from the "github.com/gravityblast/fresh" and may not be
+	//needed any longer since running `go build`s will be cancelled if a new file
+	//change event occurs.
+	BuildDelayMilliseconds int64 `yaml:"BuildDelayMilliseconds"`
+
+	//BuildName is the name of the binary output by `go build` and saved to TempDir.
+	BuildName string `yaml:"BuildName"`
+
+	//BuildLogFilename is the name of file saved in TempDir where build errors will
+	//be logged to. This file will contain output from `go build` and is useful for
+	//analyzing errors rather then looking at output in terminal.
+	BuildLogFilename string `yaml:"BuildLogFilename"`
+
+	//GoTags is anything provided to `go run` or `go build` -tags flag.
+	//
+	//Any tags provided in the config, from file or defaults, are overridden by
+	//anything provided to the -tags flag provided to fresher. This was done to
+	//alleviate the need to always edit a config file for handling -tags changes.
+	GoTags string `yaml:"GoTags"`
+
+	//GoLdflags is anything provided to `go build` -ldflags flag.
+	//See https://pkg.go.dev/cmd/link for possible options.
+	GoLdflags string `yaml:"GoLdflags"`
+
+	//GoTrimpath determines if the -trimpath flag should be passed to `go build`.
+	//Typically this isn't needed since the built binary won't be distributed since
+	//fresher is designed for development use only.
+	//See https://pkg.go.dev/cmd/go#:~:text=but%20still%20recognized.)%0A%2D-,trimpath,-remove%20all%20file.
+	GoTrimpath bool `yaml:"GoTrimpath"`
+
+	//VerboseLogging causes fresher to output more logging. Use for diagnostics when
+	//determining which files/directories/extensions are being watched and when file
+	//change events are occuring.
+	VerboseLogging bool `yaml:"VerboseLogging"`
 
 	//usingBuiltInDefaults is set to true only when File isn't actually read from a
 	//file and we are using the built in defaults instead.
@@ -93,12 +142,12 @@ func newDefaultConfig() (f File) {
 		ExtensionsToWatch:      []string{".go", ".html"},
 		NoRebuildExtensions:    []string{".html"},
 		DirectoriesToIgnore:    []string{"tmp", "node_modules", ".git", ".vscode"},
-		BuildDelayMilliseconds: 300,
-		BuildName:              "fresher-build",
-		BuildLogFilename:       "fresher-build-errors.log",
-		GoBuildTags:            "",
-		GoBuildLdflags:         "-s -w", //probably unnecessary since the built binary shouldn't be used for production or distribution.
-		GoBuildTrimpath:        true,    //probably unnecessary since the built binary shouldn't be used for production or distribution.
+		BuildDelayMilliseconds: 100,                        //100 is "instant" enough but helps catch CTRL+S being hit rapidly.
+		BuildName:              "fresher-build",            //could really be anything.
+		BuildLogFilename:       "fresher-build-errors.log", //could really be anything.
+		GoTags:                 "",
+		GoLdflags:              "-s -w", //probably unnecessary since the built binary shouldn't be used for production or distribution.
+		GoTrimpath:             true,    //probably unnecessary since the built binary shouldn't be used for production or distribution.
 		VerboseLogging:         false,
 	}
 	return
@@ -274,36 +323,41 @@ func (conf *File) validate() (err error) {
 	//Sanitize each provided extension. This catches blanks and missing leading
 	//periods. This also catches duplicates.
 	validExtensionsToWatch := []string{}
-	for _, extention := range conf.ExtensionsToWatch {
-		extention = strings.TrimSpace(extention)
+	for _, extension := range conf.ExtensionsToWatch {
+		extension = strings.TrimSpace(extension)
 
-		if !strings.HasPrefix(extention, ".") {
-			log.Println("WARNING! (config) ExtensionsToWatch " + extention + " missing leading period, added.")
+		if !strings.HasPrefix(extension, ".") {
+			log.Println("WARNING! (config) ExtensionsToWatch " + extension + " missing leading period, added.")
 		}
 
-		if slices.Contains(validExtensionsToWatch, extention) {
-			log.Println("WARNING! (config) ExtensionsToWatch duplicate " + extention + ", ignored.")
+		if slices.Contains(validExtensionsToWatch, extension) {
+			log.Println("WARNING! (config) ExtensionsToWatch duplicate " + extension + ", ignored.")
 			continue
 		}
 
-		validExtensionsToWatch = append(validExtensionsToWatch, extention)
+		validExtensionsToWatch = append(validExtensionsToWatch, extension)
 	}
 	conf.ExtensionsToWatch = validExtensionsToWatch
 
 	validNoRebuildExtensionss := []string{}
-	for _, extention := range conf.NoRebuildExtensions {
-		extention = strings.TrimSpace(extention)
+	for _, extension := range conf.NoRebuildExtensions {
+		extension = strings.TrimSpace(extension)
 
-		if !strings.HasPrefix(extention, ".") {
-			log.Println("WARNING! (config) NoRebuildExtensions " + extention + " missing leading period, added.")
+		if !strings.HasPrefix(extension, ".") {
+			log.Println("WARNING! (config) NoRebuildExtensions " + extension + " missing leading period, added.")
 		}
 
-		if slices.Contains(validNoRebuildExtensionss, extention) {
-			log.Println("WARNING! (config) NoRebuildExtensions duplicate " + extention + ", ignored.")
+		if slices.Contains(validNoRebuildExtensionss, extension) {
+			log.Println("WARNING! (config) NoRebuildExtensions duplicate " + extension + ", ignored.")
 			continue
 		}
 
-		validNoRebuildExtensionss = append(validNoRebuildExtensionss, extention)
+		if !slices.Contains(validExtensionsToWatch, extension) {
+			log.Println("WARNING! (config) NoRebuildExtensions extension " + extension + " not included in ExtensionsToWatch, added.")
+			conf.ExtensionsToWatch = append(conf.ExtensionsToWatch, extension)
+		}
+
+		validNoRebuildExtensionss = append(validNoRebuildExtensionss, extension)
 	}
 	conf.NoRebuildExtensions = validNoRebuildExtensionss
 
@@ -438,5 +492,19 @@ func HasExtensionToWatch(path string) bool {
 // used for setting up the environment for running tests.
 func UseDefaults() {
 	cfg := newDefaultConfig()
+	cfg.usingBuiltInDefaults = true
 	parsedConfig = cfg
+}
+
+// OverrideTags sets the Tags field to t. This is used when the -tags flag was provided
+// and overrides the value stored in parsedConfig's Tags field. This is useful for
+// changing tags without having to edit the config file (if it exists) each time.
+func OverrideTags(t string) {
+	t = strings.TrimSpace(t)
+	parsedConfig.GoTags = t
+}
+
+// UsingDefaults returns true is usingbuildInDefaults is set to true.
+func UsingDefaults() bool {
+	return parsedConfig.usingBuiltInDefaults
 }
