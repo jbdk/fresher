@@ -171,7 +171,7 @@ func Watch() (err error) {
 				}
 
 				if config.Data().VerboseLogging {
-					events.Printf("SENDING EVENT... %s %s", eventType, eventName)
+					events.Printf("SENDING EVENT... %s (%s)", eventName, eventType)
 				}
 
 				eventsChan <- eventName
@@ -335,7 +335,7 @@ var (
 // True is returned when build is successful.
 //
 // build() is called in start().
-func build() (err error) {
+func build(eventName string) (err error) {
 	//Get path and name to output built binary as. This is a file located in the
 	//temp directory.
 	pathToBuiltBinary := getPathToBuiltBinary()
@@ -373,7 +373,7 @@ func build() (err error) {
 	if config.Data().VerboseLogging {
 		events.Printf("Building... %s %s", "go", strings.Join(args, " "))
 	} else {
-		events.Printf("Building...")
+		events.Printf("Building... %s", eventName)
 	}
 
 	//Set up logging for when the command runs. We want to capture the output logging
