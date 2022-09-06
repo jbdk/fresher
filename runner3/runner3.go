@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/c9845/fresher/config"
@@ -58,15 +57,9 @@ func Configure() (err error) {
 
 	//Set the number of maximum file descriptors that can be opened by this process.
 	//This is needed for watching a HUGE amount of files. Windows is not applicable.
-	if runtime.GOOS != "windows" {
-		var rLimit syscall.Rlimit
-		rLimit.Max = 10000
-		rLimit.Cur = 10000
-		err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-		if err != nil {
-			events.Printf("Error setting rlimit. %s", err)
-			return
-		}
+	err = setRLimit()
+	if err != nil {
+		return
 	}
 
 	//Create the temp directory to store the build binary and error logs.
