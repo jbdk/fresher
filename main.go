@@ -19,7 +19,7 @@ func main() {
 	configFilePath := flag.String("config", "./"+config.DefaultConfigFileName, "Full path to the configuration file.")
 	printConfig := flag.Bool("print-config", false, "Print the config file this app has loaded.")
 	showVersion := flag.Bool("version", false, "Shows the version of the app.")
-	tags := flag.String("tags", "", "Anything provided to `go run` or `go build` -tags.")
+	tags := flag.String("tags", "", "Anything provided to 'go run' or 'go build' -tags.")
 	verbose := flag.Bool("verbose", false, "Verbose logging.")
 	flag.Parse()
 
