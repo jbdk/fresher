@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/c9845/fresher/config"
@@ -33,7 +32,7 @@ var (
 	//eventsChan relays file change events from the file change watcher to the binary
 	//builder. Messages are in the format `"file: DELETE|MODIFY|...`.
 	//See: https://pkg.go.dev/github.com/fsnotify/fsnotify#Event.String
-	eventsChan = make(chan string, 1000)
+	eventsChan = make(chan fsnotify.Event, 1)
 
 	//stopChan is for terminating the built and running binary when the binary is
 	//rebuilt. This prevents multiple copies of the binary from running concurrently.
@@ -58,15 +57,9 @@ func Configure() (err error) {
 
 	//Set the number of maximum file descriptors that can be opened by this process.
 	//This is needed for watching a HUGE amount of files. Windows is not applicable.
-	if runtime.GOOS != "windows" {
-		var rLimit syscall.Rlimit
-		rLimit.Max = 10000
-		rLimit.Cur = 10000
-		err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-		if err != nil {
-			events.Printf("Error setting rlimit. %s", err)
-			return
-		}
+	err = setRLimit()
+	if err != nil {
+		return
 	}
 
 	//Create the temp directory to store the build binary and error logs.
@@ -154,6 +147,15 @@ func Watch() (err error) {
 	//an extension that we watch for (i.e.: no sense in sending events to rebuild
 	//binary if a .docx file was changed).
 	go func() {
+		//Handle double-save events that can sometimes occur. Usually due to "save
+		//new file and rename" method of saving files by text editors/OSes. This is
+		//particularly helpful on Windows as duplicate events occur for each file
+		//save a human initiates.
+		//Taken from: https://github.com/fsnotify/fsnotify/issues/122#issuecomment-1065925569
+		var lastEvent fsnotify.Event
+		timer := time.NewTimer(time.Millisecond)
+		<-timer.C
+
 		for {
 			select {
 			case err := <-watcher.Errors:
@@ -170,18 +172,27 @@ func Watch() (err error) {
 				//Get name of file that has changed (event.Name is actually a relative
 				//path, not just a file's name).
 				eventName := event.Name
-				eventType := event.Op.String()
+				// eventType := event.Op.String()
 
-				//Skip building if a non-watched file is changed.
+				//Skip sending event if a non-watched file is changed.
 				if !config.HasExtensionToWatch(eventName) {
 					continue
 				}
 
+				//Store the event and wait a short while to catch duplicate events.
+				lastEvent = event
+				timer.Reset(time.Millisecond * 50)
+
+			case <-timer.C:
+				eventName := lastEvent.Name
+				eventType := lastEvent.Op.String()
+
 				if config.Data().VerboseLogging {
-					events.Printf("SENDING EVENT... %s %s", eventType, eventName)
+					events.Printf("SENDING EVENT... %s (%s)", eventName, eventType)
 				}
 
-				eventsChan <- eventName
+				//Cause binary to be rebuilt and/or rerun.
+				eventsChan <- lastEvent
 
 				//Check if binary is currently being built and stop the build if this
 				//event will just result in a rebuild. This saves a bit of time since
@@ -196,6 +207,7 @@ func Watch() (err error) {
 					killBuildingChan <- true
 				}
 			}
+
 		}
 	}()
 
@@ -219,18 +231,20 @@ func start() {
 	go func() {
 		for {
 			//Get event.
-			eventName := <-eventsChan
-			events.Printf("GOT EVENT... %s", eventName)
+			event := <-eventsChan
+			eventName := event.Name
+			eventType := event.Op.String()
+			events.Printf("GOT EVENT... %s (%s)", eventName, eventType)
 
 			//Track if build is successful so we know to stop watching and building.
-			buildFailed := false
-			buildKilled := false
+			buildSuccessful := false
 
 			//Determine if we need to rebuild the binary. We really only need to
 			//rebuild if a .go file changes (unless the binary is using embedded
 			//files). This is simply a performance improver since we do not need to
 			//rebuild the binary if, say, an HTML file is changed.
-			if shouldRebuild(eventName) {
+			rebuildRequired := shouldRebuild(eventName)
+			if rebuildRequired {
 				//Binary should be rebuilt.
 
 				//Get build delay so that we don't rebuild too fast. This helps improve
@@ -240,7 +254,10 @@ func start() {
 				//
 				//The build delay should be low enough not to induce too much latency
 				//before building but long enough to catch rapid file saves.
-				time.Sleep(time.Duration(config.Data().BuildDelayMilliseconds) * time.Millisecond)
+				delay := time.Duration(config.Data().BuildDelayMilliseconds) * time.Millisecond
+				events.Printf("Waiting %s before rebuilding...", delay)
+				time.Sleep(delay)
+				events.Printf("Waiting %s before rebuilding...done", delay)
 
 				//Clear the error log since we are rebuilding the binary.
 				err := deleteBuildErrorsLog()
@@ -250,12 +267,10 @@ func start() {
 				}
 
 				//Build the binary. Same as running `go build`.
-				err = build()
+				err = build(event)
 				if err == errBuildKilled {
-					buildKilled = true
+					buildSuccessful = false
 				} else if err != nil {
-					buildFailed = true
-
 					errs.Printf("Build Failed %s", err)
 					if !started {
 						//Build failed and the binary never stared running, exit fresher.
@@ -263,18 +278,37 @@ func start() {
 						//the binary for the first time.
 						os.Exit(1)
 					}
+				} else {
+					buildSuccessful = true
 				}
 			}
 
-			//Run the built binary if it was successfully built. Same as running
-			//./my-binary or .\my-binary.exe. Binary is also rerun if a file change
-			//event occured that didn't required a rebuild.
+			//Handle times when binary was previously built successfully but failed
+			//building this time. The currently running binary will continue running.
+			//Just log this out.
+			if started && rebuildRequired && !buildSuccessful {
+				errs.Printf("Rebuild failed or killed, previous build still running.")
+				continue
+			}
+
+			//Run the newly built binary or restart a previously built binary if a
+			//file was changed that doesn't require a rebuild (i.e.: html).
 			//
-			//Stop the binary if it was previously built and is running before
-			//restarting it. We don't want more than one build running at once!
-			if !buildFailed && !buildKilled {
+			//There is a bit of a mess of if/else statements here. This is just for
+			//logging out slightly different terms to clarify what is going on. This
+			//could be drastically simplified to remove all the logging since run()
+			//logs out info anyway, but it is nice to see the different terms sometimes
+			//for debugging (fresher or the binary being run).
+			if buildSuccessful {
 				if started {
+					if rebuildRequired {
+						events.Printf("Running rebuilt binary...")
+					} else {
+						events.Printf("Rerunning existing binary...")
+					}
 					stopChan <- true
+				} else {
+					events.Printf("Running binary...")
 				}
 
 				run()
@@ -342,7 +376,11 @@ var (
 // True is returned when build is successful.
 //
 // build() is called in start().
-func build() (err error) {
+func build(event fsnotify.Event) (err error) {
+	//Debugging.
+	eventName := event.Name
+	eventType := event.Op.String()
+
 	//Get path and name to output built binary as. This is a file located in the
 	//temp directory.
 	pathToBuiltBinary := getPathToBuiltBinary()
@@ -380,7 +418,7 @@ func build() (err error) {
 	if config.Data().VerboseLogging {
 		events.Printf("Building... %s %s", "go", strings.Join(args, " "))
 	} else {
-		events.Printf("Building...")
+		events.Printf("Building... %s (%s)", eventName, eventType)
 	}
 
 	//Set up logging for when the command runs. We want to capture the output logging
@@ -562,7 +600,10 @@ func Start() {
 
 	//Send an event to build and run the binary for the first time when fresher
 	//starts. "/" is just a random string to trigger building.
-	eventsChan <- "/"
+	eventsChan <- fsnotify.Event{
+		Name: "/",
+		Op:   fsnotify.Write,
+	}
 
 	//Block indefintely to continuously watch for file changes and rebuild as needed.
 	<-make(chan int)
