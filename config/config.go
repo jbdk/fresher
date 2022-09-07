@@ -496,6 +496,11 @@ func UseDefaults() {
 	parsedConfig = cfg
 }
 
+// UsingDefaults returns true is usingbuildInDefaults is set to true.
+func UsingDefaults() bool {
+	return parsedConfig.usingBuiltInDefaults
+}
+
 // OverrideTags sets the Tags field to t. This is used when the -tags flag was provided
 // and overrides the value stored in parsedConfig's Tags field. This is useful for
 // changing tags without having to edit the config file (if it exists) each time.
@@ -504,7 +509,11 @@ func OverrideTags(t string) {
 	parsedConfig.GoTags = t
 }
 
-// UsingDefaults returns true is usingbuildInDefaults is set to true.
-func UsingDefaults() bool {
-	return parsedConfig.usingBuiltInDefaults
+// OverrideVerbose sets the VerboseLogging field to v. This is used when the -verbose
+// flag was provided and overrides the value stored in teh parsedConfig's VerboseLogging
+// field. This is useful for when (1) you aren't using a config file (i.e.: the default
+// running method of fresher), or (2) you have a config file and just want some extra
+// logging on a case-by-case basis.
+func OverrideVerbose(v bool) {
+	parsedConfig.VerboseLogging = v
 }
