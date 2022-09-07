@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/c9845/fresher/config"
 	"github.com/mattn/go-colorable"
 )
 
@@ -11,8 +12,8 @@ import (
 // initialized in Configure(). Colorizing also helps makes fresher related logs stand
 // out from the binary being run logs.
 var (
-	events coloredLogger //for file change, build, run.
-	other  coloredLogger //verbose logging, etc.
+	events coloredLogger //for file changes, build, run.
+	warn   coloredLogger //verbose logging, more details about file changes, builds, etc.
 	errs   coloredLogger //errors
 )
 
@@ -74,4 +75,15 @@ func (c *coloredLogger) Printf(format string, v ...interface{}) {
 
 	format = fmt.Sprintf("%s%s |%s %s", c.colorCode, c.prefix, resetCode, format)
 	logger.Printf(format, v...)
+}
+
+// Verbosef calls Printf if, and only if, verbose logging is enabled. This alleviates
+// us from having to put "if" blocks around Printf to check if verbose logging is
+// enabled.
+func (c *coloredLogger) Verbosef(format string, v ...interface{}) {
+	if !config.Data().VerboseLogging {
+		return
+	}
+
+	c.Printf(format, v)
 }

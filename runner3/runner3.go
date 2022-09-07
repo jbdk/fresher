@@ -52,7 +52,7 @@ var (
 func Configure() (err error) {
 	//Set up logging.
 	events = newLogger("fresher", "blue")
-	other = newLogger("fresher", "yellow")
+	warn = newLogger("fresher", "yellow")
 	errs = newLogger("fresher", "red")
 
 	//Set the number of maximum file descriptors that can be opened by this process.
@@ -70,8 +70,8 @@ func Configure() (err error) {
 
 	//Debug logging.
 	if config.Data().VerboseLogging {
-		other.Printf("Watching extensions: %s", config.Data().ExtensionsToWatch)
-		other.Printf("Ignoring directories: %s", config.Data().DirectoriesToIgnore)
+		warn.Printf("Watching extensions: %s", config.Data().ExtensionsToWatch)
+		warn.Printf("Ignoring directories: %s", config.Data().DirectoriesToIgnore)
 	}
 
 	return
@@ -125,7 +125,7 @@ func Watch() (err error) {
 		//easily compare without having to handle absolute paths.
 		if config.IsDirectoryToIgnore(path) {
 			if config.Data().VerboseLogging {
-				other.Printf("IGNORING... %s", path)
+				warn.Printf("IGNORING... %s", path)
 			}
 
 			return fs.SkipDir
