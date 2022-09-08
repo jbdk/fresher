@@ -60,7 +60,8 @@ type coloredLogger struct {
 //
 // The colorable package is needed to handle colorizing Windows logs; if we didn't
 // care about Windows we could just use os.Stderr instead.
-var logger = log.New(colorable.NewColorableStderr(), "", log.LstdFlags)
+var loggerFlags = log.LstdFlags // use log.Ldate | log.Ltime | log.Lmicroseconds for debugging.
+var logger = log.New(colorable.NewColorableStderr(), "", loggerFlags)
 
 // newLogger returns a coloredLogger for calling Printf on with the resulting log
 // colored and prefixed accordingly.
@@ -81,9 +82,9 @@ func (c *coloredLogger) Printf(format string, v ...interface{}) {
 // us from having to put "if" blocks around Printf to check if verbose logging is
 // enabled.
 func (c *coloredLogger) Verbosef(format string, v ...interface{}) {
-	if !config.Data().VerboseLogging {
+	if !config.Data().Verbose {
 		return
 	}
 
-	c.Printf(format, v)
+	c.Printf(format, v...)
 }

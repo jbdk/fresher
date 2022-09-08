@@ -24,7 +24,6 @@ import (
 
 	"github.com/c9845/fresher/config"
 	"github.com/fsnotify/fsnotify"
-	"golang.org/x/exp/slices"
 )
 
 // Define communication channels.
@@ -69,10 +68,8 @@ func Configure() (err error) {
 	}
 
 	//Debug logging.
-	if config.Data().VerboseLogging {
-		warn.Printf("Watching extensions: %s", config.Data().ExtensionsToWatch)
-		warn.Printf("Ignoring directories: %s", config.Data().DirectoriesToIgnore)
-	}
+	warn.Verbosef("Watching extensions: %s", config.Data().ExtensionsToWatch)
+	warn.Verbosef("Ignoring directories: %s", config.Data().DirectoriesToIgnore)
 
 	return
 }
@@ -111,7 +108,7 @@ func Watch() (err error) {
 		//Ignore directory if it is the temp directory where built binaries are stored
 		//before running. No need to watch this directory since it stores temp data
 		//from fresher.
-		yes, err := config.IsTempDir(path)
+		yes, err := config.Data().IsTempDir(path)
 		if err != nil {
 			return err
 		}
@@ -123,18 +120,14 @@ func Watch() (err error) {
 		//listed in config file are based off of the WorkingDir. The path in the
 		//WalkDirFunc here is also based off of the WorkingDir, so therefore we can
 		//easily compare without having to handle absolute paths.
-		if config.IsDirectoryToIgnore(path) {
-			if config.Data().VerboseLogging {
-				warn.Printf("IGNORING... %s", path)
-			}
+		if config.Data().IsDirectoryToIgnore(path) {
+			warn.Verbosef("IGNORING %s", path)
 
 			return fs.SkipDir
 		}
 
 		//Add path to watcher.
-		if config.Data().VerboseLogging {
-			events.Printf("Watching... %s", path)
-		}
+		events.Verbosef("Watching %s", path)
 		err = watcher.Add(path)
 		return err
 	})
@@ -175,7 +168,7 @@ func Watch() (err error) {
 				// eventType := event.Op.String()
 
 				//Skip sending event if a non-watched file is changed.
-				if !config.HasExtensionToWatch(eventName) {
+				if !config.Data().IsExtensionToWatch(filepath.Ext(eventName)) {
 					continue
 				}
 
@@ -187,9 +180,7 @@ func Watch() (err error) {
 				eventName := lastEvent.Name
 				eventType := lastEvent.Op.String()
 
-				if config.Data().VerboseLogging {
-					events.Printf("SENDING EVENT... %s (%s)", eventName, eventType)
-				}
+				events.Verbosef("Sending Event... %s (%s)", eventName, eventType)
 
 				//Cause binary to be rebuilt and/or rerun.
 				eventsChan <- lastEvent
@@ -203,7 +194,8 @@ func Watch() (err error) {
 				//This is not checked in start() since start blocks when build() is
 				//running and thus will not be able to receive a new event until build()
 				//is complete, therefore building can never be killed!
-				if buildCmdRunning && shouldRebuild(eventName) {
+				rebuildRequired := config.Data().IsRebuildExtension(filepath.Ext(eventName))
+				if buildCmdRunning && rebuildRequired {
 					killBuildingChan <- true
 				}
 			}
@@ -234,7 +226,7 @@ func start() {
 			event := <-eventsChan
 			eventName := event.Name
 			eventType := event.Op.String()
-			events.Printf("GOT EVENT... %s (%s)", eventName, eventType)
+			events.Printf("Got Event... %s (%s)", eventName, eventType)
 
 			//Track if build is successful so we know to stop watching and building.
 			buildSuccessful := false
@@ -243,7 +235,7 @@ func start() {
 			//rebuild if a .go file changes (unless the binary is using embedded
 			//files). This is simply a performance improver since we do not need to
 			//rebuild the binary if, say, an HTML file is changed.
-			rebuildRequired := shouldRebuild(eventName)
+			rebuildRequired := config.Data().IsRebuildExtension(filepath.Ext(eventName))
 			if rebuildRequired {
 				//Binary should be rebuilt.
 
@@ -255,9 +247,9 @@ func start() {
 				//The build delay should be low enough not to induce too much latency
 				//before building but long enough to catch rapid file saves.
 				delay := time.Duration(config.Data().BuildDelayMilliseconds) * time.Millisecond
-				events.Printf("Waiting %s before rebuilding...", delay)
+				events.Verbosef("Waiting %s before rebuilding...", delay)
 				time.Sleep(delay)
-				events.Printf("Waiting %s before rebuilding...done", delay)
+				events.Verbosef("Waiting %s before rebuilding...done", delay)
 
 				//Clear the error log since we are rebuilding the binary.
 				err := deleteBuildErrorsLog()
@@ -283,40 +275,35 @@ func start() {
 				}
 			}
 
-			//Handle times when binary was previously built successfully but failed
+			//Handle logging when binary was previously built successfully but failed
 			//building this time. The currently running binary will continue running.
-			//Just log this out.
-			if started && rebuildRequired && !buildSuccessful {
+			if rebuildRequired && !buildSuccessful {
 				errs.Printf("Rebuild failed or killed, previous build still running.")
 				continue
 			}
 
-			//Run the newly built binary or restart a previously built binary if a
-			//file was changed that doesn't require a rebuild (i.e.: html).
-			//
-			//There is a bit of a mess of if/else statements here. This is just for
-			//logging out slightly different terms to clarify what is going on. This
-			//could be drastically simplified to remove all the logging since run()
-			//logs out info anyway, but it is nice to see the different terms sometimes
-			//for debugging (fresher or the binary being run).
-			if buildSuccessful {
-				if started {
-					if rebuildRequired {
-						events.Printf("Running rebuilt binary...")
-					} else {
-						events.Printf("Rerunning existing binary...")
-					}
-					stopChan <- true
+			//Handle logging for starting of the built binary. Have to handle binary
+			//being built first time, being rebuild, or existing binary just being
+			//rerun.
+			if started {
+				if !rebuildRequired {
+					warn.Verbosef("Rerunning existing binary, file with no rebuild extension changed...")
 				} else {
-					events.Printf("Running binary...")
+					events.Verbosef("Running rebuilt binary...")
 				}
 
-				run()
-
-				//Add logging line to separate fresher logging output from built
-				//binary's logging output.
-				events.Printf(strings.Repeat("-", 50))
+				stopChan <- true
+			} else {
+				events.Verbosef("Running first build of binary...")
 			}
+
+			//Run the newly built binary or restart a previously built binary if a
+			//file was changed that doesn't require a rebuild (i.e.: html).
+			run()
+
+			//Add logging line to separate fresher logging output from built
+			//binary's logging output.
+			events.Printf(strings.Repeat("-", 50))
 
 			//Note that binary is started. This way if a subsequent build fails, the
 			//running binary won't be stopped.
@@ -332,22 +319,6 @@ func deleteBuildErrorsLog() (err error) {
 	pathToFile := filepath.Join(config.Data().TempDir, config.Data().BuildLogFilename)
 	err = os.Remove(pathToFile)
 	return
-}
-
-// shouldRebuild checks if the file noted in eventName ends in a file extension that
-// we watch for changes and rebuild the binary on. This compares the extension to the
-// config file field NoRebuildExtensions. eventName is a relative path, not just a
-// file's name.
-//
-// This func is not located in the config package since it handles fsnotify specific
-// data/text and all fsnotify related code is in this package.
-func shouldRebuild(eventName string) bool {
-	//Get file's extension. This includes the prepended period (i.e: .html will be
-	//returned by Ext().
-	extension := filepath.Ext(eventName)
-
-	//Check if filename has an extension that rebuilding should be skipped.
-	return !slices.Contains(config.Data().NoRebuildExtensions, extension)
 }
 
 // buildCmdRunning is used to monitor the state of whether or not the `go build`
@@ -414,9 +385,10 @@ func build(event fsnotify.Event) (err error) {
 	args = append(args, entryPoint)
 
 	//Initialize the command, but do not run it.
+	buildStartTime := time.Now()
 	cmd := exec.Command("go", args...)
-	if config.Data().VerboseLogging {
-		events.Printf("Building... %s %s", "go", strings.Join(args, " "))
+	if config.Data().Verbose {
+		events.Verbosef("Building... %s %s", "go", strings.Join(args, " "))
 	} else {
 		events.Printf("Building... %s (%s)", eventName, eventType)
 	}
@@ -509,6 +481,9 @@ func build(event fsnotify.Event) (err error) {
 		return errBuildFailed
 	}
 
+	//Extra logging.
+	events.Verbosef("Building... %s %s (Took %s)", "go", strings.Join(args, " "), time.Since(buildStartTime))
+
 	//Build was successful. Binary is now located in temp dir.
 	return
 }
@@ -556,7 +531,7 @@ func run() {
 
 	//Initialize the command, but do not run it.
 	cmd := exec.Command(pathToBuiltBinary)
-	if config.Data().VerboseLogging {
+	if config.Data().Verbose {
 		events.Printf("Running... %s", pathToBuiltBinary)
 	} else {
 		events.Printf("Running...")

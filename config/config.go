@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/c9845/fresher/version"
-	"golang.org/x/exp/slices"
 	"gopkg.in/yaml.v2"
 )
 
@@ -111,10 +110,10 @@ type File struct {
 	//See https://pkg.go.dev/cmd/go#:~:text=but%20still%20recognized.)%0A%2D-,trimpath,-remove%20all%20file.
 	GoTrimpath bool `yaml:"GoTrimpath"`
 
-	//VerboseLogging causes fresher to output more logging. Use for diagnostics when
+	//Verbose causes fresher to output more logging. Use for diagnostics when
 	//determining which files/directories/extensions are being watched and when file
 	//change events are occuring.
-	VerboseLogging bool `yaml:"VerboseLogging"`
+	Verbose bool `yaml:"Verbose"`
 
 	//usingBuiltInDefaults is set to true only when File isn't actually read from a
 	//file and we are using the built in defaults instead.
@@ -128,7 +127,7 @@ type File struct {
 var parsedConfig File
 
 // newDefaultConfig returns a File with default values set for each field.
-func newDefaultConfig() (f File) {
+func newDefaultConfig() (f *File) {
 	//Base working directory is relative to where fresher has been called from. This
 	//is done, instead of using absolute path, so that in case the fresher.conf config
 	//file is saved to version control, no identifying information from an absolute
@@ -136,7 +135,7 @@ func newDefaultConfig() (f File) {
 	//may be something like /users/johnsmith/.../fresher.conf, leaking the user's name.
 	workingDir := "."
 
-	f = File{
+	f = &File{
 		WorkingDir:             workingDir,
 		TempDir:                filepath.Join(workingDir, "tmp"),
 		ExtensionsToWatch:      []string{".go", ".html"},
@@ -148,7 +147,9 @@ func newDefaultConfig() (f File) {
 		GoTags:                 "",
 		GoLdflags:              "-s -w", //probably unnecessary since the built binary shouldn't be used for production or distribution.
 		GoTrimpath:             true,    //probably unnecessary since the built binary shouldn't be used for production or distribution.
-		VerboseLogging:         false,
+		Verbose:                false,
+
+		usingBuiltInDefaults: true,
 	}
 	return
 }
@@ -180,17 +181,14 @@ func CreateDefaultConfig() (err error) {
 	return
 }
 
-// Read handles reading and parsing the config file at the provided path. The parsed
-// data is sanitized and validated. The print argument is used to print the config
-// as it was read/parsed and as it was understood after sanitizing, validating, and
-// handling default values.
+// Read handles reading and parsing the config file at the provided path and saving
+// it to the package's parsedConfig variable for future use. The parsed data is
+// sanitized and validated. The print argument is used to print the config as it was
+// read/parsed and as it was understood after sanitizing, validating, and handling
+// default values.
 //
 // If a config file is not found at the given path, a warning is shown and the
 // built-in default config is used instead. Use -init to create a default config file.
-//
-// The parsed configuration is stored in a local variable for access with the
-// Data() func. This is done so that the config file doesn't need to be reparsed
-// each time we want to get data from it.
 func Read(path string, print bool) (err error) {
 	// log.Println("Provided config file path:", path, print)
 
@@ -204,20 +202,18 @@ func Read(path string, print bool) (err error) {
 	if strings.TrimSpace(path) == "" {
 		//Get default config.
 		cfg := newDefaultConfig()
-		cfg.usingBuiltInDefaults = true
 
 		//Save the config to this package for use elsewhere in the app.
-		parsedConfig = cfg
+		parsedConfig = *cfg
 
 	} else if _, err = os.Stat(path); os.IsNotExist(err) {
 		// log.Printf("WARNING! (config) Config file not found at %s, use -init flag to create it, using built-in defaults.", path)
 
 		//Get default config.
 		cfg := newDefaultConfig()
-		cfg.usingBuiltInDefaults = true
 
 		//Save the config to this package for use elsewhere in the app.
-		parsedConfig = cfg
+		parsedConfig = *cfg
 
 		//Unset the file not found error.
 		err = nil
@@ -320,8 +316,7 @@ func (conf *File) validate() (err error) {
 		log.Println("WARNING! (config) TempDir not provided, defaulting to " + conf.TempDir + ".")
 	}
 
-	//Sanitize each provided extension. This catches blanks and missing leading
-	//periods. This also catches duplicates.
+	//Make sure each extension to watch is only provided once.
 	validExtensionsToWatch := []string{}
 	for _, extension := range conf.ExtensionsToWatch {
 		extension = strings.TrimSpace(extension)
@@ -330,7 +325,7 @@ func (conf *File) validate() (err error) {
 			log.Println("WARNING! (config) ExtensionsToWatch " + extension + " missing leading period, added.")
 		}
 
-		if slices.Contains(validExtensionsToWatch, extension) {
+		if isStringInSlice(validExtensionsToWatch, extension) {
 			log.Println("WARNING! (config) ExtensionsToWatch duplicate " + extension + ", ignored.")
 			continue
 		}
@@ -339,6 +334,14 @@ func (conf *File) validate() (err error) {
 	}
 	conf.ExtensionsToWatch = validExtensionsToWatch
 
+	//Make sure at least one extension to watch was given. If no extensions were given,
+	//then we don't know what files to watch for changes!
+	if len(conf.ExtensionsToWatch) == 0 {
+		conf.ExtensionsToWatch = defaults.ExtensionsToWatch
+		log.Printf("WARNING! (config) ExtensionsToWatch not provided, defaulting to %s.", conf.ExtensionsToWatch)
+	}
+
+	//Make sure any no-rebuild extensions are also watched extensions.
 	validNoRebuildExtensionss := []string{}
 	for _, extension := range conf.NoRebuildExtensions {
 		extension = strings.TrimSpace(extension)
@@ -347,12 +350,12 @@ func (conf *File) validate() (err error) {
 			log.Println("WARNING! (config) NoRebuildExtensions " + extension + " missing leading period, added.")
 		}
 
-		if slices.Contains(validNoRebuildExtensionss, extension) {
+		if isStringInSlice(validNoRebuildExtensionss, extension) {
 			log.Println("WARNING! (config) NoRebuildExtensions duplicate " + extension + ", ignored.")
 			continue
 		}
 
-		if !slices.Contains(validExtensionsToWatch, extension) {
+		if !isStringInSlice(conf.ExtensionsToWatch, extension) {
 			log.Println("WARNING! (config) NoRebuildExtensions extension " + extension + " not included in ExtensionsToWatch, added.")
 			conf.ExtensionsToWatch = append(conf.ExtensionsToWatch, extension)
 		}
@@ -361,14 +364,7 @@ func (conf *File) validate() (err error) {
 	}
 	conf.NoRebuildExtensions = validNoRebuildExtensionss
 
-	//Make sure at least one extension to watch was given. If no extensions were given,
-	//then we don't know what files to watch for changes!
-	if len(conf.ExtensionsToWatch) == 0 {
-		conf.ExtensionsToWatch = defaults.ExtensionsToWatch
-		log.Printf("WARNING! (config) ExtensionsToWatch not provided, defaulting to %s .", conf.ExtensionsToWatch)
-	}
-
-	//Make sure any directories to ignore actually exist off the working dir.
+	//Remove duplicate directories to ignore and sanitize each.
 	validDirectoriesToIgnore := []string{}
 	for _, dir := range conf.DirectoriesToIgnore {
 		//Sanitize.
@@ -378,7 +374,7 @@ func (conf *File) validate() (err error) {
 		//We don't check if a directory actually exists. Who cares if a directory
 		//listed in the config file doesn't actually exists in the repo.
 
-		if slices.Contains(validDirectoriesToIgnore, dir) {
+		if isStringInSlice(validDirectoriesToIgnore, dir) {
 			log.Println("WARNING! (config) Duplicate directory " + dir + " in DirectoriesToIgnore.")
 			continue
 		}
@@ -433,21 +429,21 @@ func (conf File) print(path string) {
 	}
 }
 
-// Data returns the full parsed config file data
-// This is used in other packages to use config file setting data.
-func Data() File {
-	return parsedConfig
+// Data returns the package level saved config. This is used in other packages to
+// access the parsed config file.
+func Data() *File {
+	return &parsedConfig
 }
 
 // IsTempDir returns true if the given path represents the same directory as TempDir.
 // We use absolute paths here since we want to be certain if the path given matches
 // the same underlying directory as given in TempDir.
-func IsTempDir(path string) (yes bool, err error) {
+func (conf *File) IsTempDir(path string) (yes bool, err error) {
 	pathAbs, err := filepath.Abs(path)
 	if err != nil {
 		return
 	}
-	fullTempDirPath, err := filepath.Abs(parsedConfig.TempDir)
+	fullTempDirPath, err := filepath.Abs(conf.TempDir)
 	if err != nil {
 		return
 	}
@@ -460,8 +456,9 @@ func IsTempDir(path string) (yes bool, err error) {
 }
 
 // IsDirectoryToIgnore returns true if the given path is in the DirectoriesToIgnore.
-func IsDirectoryToIgnore(path string) bool {
-	for _, d := range parsedConfig.DirectoriesToIgnore {
+func (conf *File) IsDirectoryToIgnore(path string) bool {
+	//not using isStringInSlice because of extra HasPrefix.
+	for _, d := range conf.DirectoriesToIgnore {
 		if strings.HasPrefix(path, d) {
 			return true
 		}
@@ -470,50 +467,50 @@ func IsDirectoryToIgnore(path string) bool {
 	return false
 }
 
-// HasExtensionToWatch returns true if the given path contains an extension we should
-// watch for changes.
-func HasExtensionToWatch(path string) bool {
-	//Make sure path isn't to a file in our temporary directory. This shouldn't really
-	//be needed since thte temp dir shouldn't be watched for file changes anyway.
-	//
-	//Errors are ignored just for ease of using this func in select.
-	absolutePath, _ := filepath.Abs(path)
-	absoluteTempPath, _ := filepath.Abs(parsedConfig.TempDir)
-	if strings.HasPrefix(absolutePath, absoluteTempPath) {
-		return false
-	}
-
-	//Check if this file has a valid extension we want to watch for.
-	extension := filepath.Ext(path)
-	return slices.Contains(parsedConfig.ExtensionsToWatch, extension)
+// IsRebuildExtension returns true if the given extension is not in the
+// NoRebuildExtensions list.
+func (conf *File) IsRebuildExtension(extension string) bool {
+	return !isStringInSlice(conf.NoRebuildExtensions, extension)
 }
 
-// UseDefaults populates the config with the default settings. This should ONLY be
-// used for setting up the environment for running tests.
-func UseDefaults() {
-	cfg := newDefaultConfig()
-	cfg.usingBuiltInDefaults = true
-	parsedConfig = cfg
+// IsExtensionToWatch returns true if the given path contains an extension we should
+// watch for changes.
+func (conf *File) IsExtensionToWatch(extension string) bool {
+	return isStringInSlice(conf.ExtensionsToWatch, extension)
 }
 
 // UsingDefaults returns true is usingbuildInDefaults is set to true.
-func UsingDefaults() bool {
-	return parsedConfig.usingBuiltInDefaults
+func (conf *File) UsingDefaults() bool {
+	return conf.usingBuiltInDefaults
 }
 
 // OverrideTags sets the Tags field to t. This is used when the -tags flag was provided
 // and overrides the value stored in parsedConfig's Tags field. This is useful for
 // changing tags without having to edit the config file (if it exists) each time.
-func OverrideTags(t string) {
-	t = strings.TrimSpace(t)
-	parsedConfig.GoTags = t
+func (conf *File) OverrideTags(t string) {
+	conf.GoTags = strings.TrimSpace(t)
 }
 
-// OverrideVerbose sets the VerboseLogging field to v. This is used when the -verbose
-// flag was provided and overrides the value stored in teh parsedConfig's VerboseLogging
+// OverrideVerbose sets the Verbose field to v. This is used when the -verbose
+// flag was provided and overrides the value stored in teh parsedConfig's Verbose
 // field. This is useful for when (1) you aren't using a config file (i.e.: the default
 // running method of fresher), or (2) you have a config file and just want some extra
 // logging on a case-by-case basis.
-func OverrideVerbose(v bool) {
-	parsedConfig.VerboseLogging = v
+func (conf *File) OverrideVerbose(v bool) {
+	conf.Verbose = v
+}
+
+// isStringInSlice checks if needle is in haystack.
+//
+// We could use the experimental generic slices.Contains() function, but since we are
+// only ever comparing strings in this package, using a non-generic func should provide
+// better (if ever so slight) performance. Plus, it removes an import.
+func isStringInSlice(haystack []string, needle string) bool {
+	for _, v := range haystack {
+		if v == needle {
+			return true
+		}
+	}
+
+	return false
 }

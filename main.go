@@ -58,13 +58,13 @@ func main() {
 
 	//Handle overriding config with flags.
 	if len(strings.TrimSpace(*tags)) > 0 {
-		if !config.UsingDefaults() {
+		if !config.Data().UsingDefaults() {
 			log.Println("WARNING! (main) Overriding Tags with provided -tags.")
 		}
-		config.OverrideTags(*tags)
+		config.Data().OverrideTags(*tags)
 	}
 	if *verbose {
-		config.OverrideVerbose(*verbose)
+		config.Data().OverrideVerbose(*verbose)
 	}
 
 	//Configure.
