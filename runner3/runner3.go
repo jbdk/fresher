@@ -144,7 +144,19 @@ func Watch() (err error) {
 		//new file and rename" method of saving files by text editors/OSes. This is
 		//particularly helpful on Windows as duplicate events occur for each file
 		//save a human initiates.
+		//
+		//This works by setting a timer when a file change event occurs (see time.Reset
+		//below) when a file change event occurs. While the timer is running, before
+		//it expires, other file change events are still received. However, only the
+		//last event is "remembered". After the timer expires, the "remembered" last
+		//event is sent on the events channel causing the rebuild and/or rerun to
+		//occur.
+		//
 		//Taken from: https://github.com/fsnotify/fsnotify/issues/122#issuecomment-1065925569
+		//
+		//Note the immediately below NewTimer related code. This just initiates the
+		//timer and reads the first expiration so the timer can be reset when events
+		//occur.
 		var lastEvent fsnotify.Event
 		timer := time.NewTimer(time.Millisecond)
 		<-timer.C
@@ -162,13 +174,8 @@ func Watch() (err error) {
 					continue
 				}
 
-				//Get name of file that has changed (event.Name is actually a relative
-				//path, not just a file's name).
-				eventName := event.Name
-				// eventType := event.Op.String()
-
 				//Skip sending event if a non-watched file is changed.
-				if !config.Data().IsExtensionToWatch(filepath.Ext(eventName)) {
+				if !config.Data().IsExtensionToWatch(filepath.Ext(event.Name)) {
 					continue
 				}
 
