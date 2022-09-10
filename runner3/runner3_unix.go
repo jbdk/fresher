@@ -14,4 +14,6 @@ func setRLimit() (err error) {
 	if err != nil {
 		return
 	}
+
+	return
 }
