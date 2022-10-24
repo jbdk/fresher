@@ -55,6 +55,10 @@ type File struct {
 	//`go build` would be executed in.
 	WorkingDir string `yaml:"WorkingDir"`
 
+	//EntryPoint is the path to the main package, which is passed to `go run` or
+	//`go build` commands. Defaults to '.'.
+	EntryPoint string `yaml:"EntryPoint"`
+
 	//TempDir is the directory off of WorkingDir where fresher will store the built
 	//binary, that will be run, and error logs.
 	TempDir string `yaml:"TempDir"`
@@ -137,6 +141,7 @@ func newDefaultConfig() (f *File) {
 
 	f = &File{
 		WorkingDir:             workingDir,
+		EntryPoint:             ".",
 		TempDir:                filepath.Join(workingDir, "tmp"),
 		ExtensionsToWatch:      []string{".go", ".html"},
 		NoRebuildExtensions:    []string{".html"},
@@ -307,6 +312,12 @@ func (conf *File) validate() (err error) {
 	conf.WorkingDir = filepath.FromSlash(strings.TrimSpace(conf.WorkingDir))
 	if conf.WorkingDir == "" {
 		return errors.New("config: WorkingDir not set. Typically this should be set to \".\"")
+	}
+
+	//Make sure entry point directory is set. This might be "." or any other path.
+	conf.EntryPoint = strings.TrimSpace(conf.EntryPoint)
+	if conf.EntryPoint == "" {
+		return errors.New("config: EntryPoint not set. Typically this should be set to \".\"")
 	}
 
 	//Make sure temp directory is somewhat valid looking.

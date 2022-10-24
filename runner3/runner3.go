@@ -386,7 +386,7 @@ func build(event fsnotify.Event) (err error) {
 	//Not naming a single "main.go" file allows for using any .go filename as the
 	//entry point, and using multiple .go files at once; go build figures this all
 	//out.
-	entryPoint := config.Data().WorkingDir
+	entryPoint := config.Data().EntryPoint
 
 	//Add the entry point to build the binary from.
 	args = append(args, entryPoint)
