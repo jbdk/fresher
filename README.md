@@ -22,17 +22,17 @@ For more advanced usage, and customizing how `fresher` works, run `fresher -init
 3. When a file is changed, `go build` is run and the built binary is then run. This is repeated upon each file change.
 
 
-# Rewrite of fresh:
-`fresher` is a rewrite of `github.com/gravityblast/fresh` (previously known as `github.com/pilu/fresh`) to add better configuration, improved code base, and improved performance. You can use fresher in the same manner as `fresh`.
+# Rewrite of `fresh`:
+`fresher` is a rewrite of `github.com/gravityblast/fresh` (previously known as `github.com/pilu/fresh`) to improve the configuration options, improve, modernize, and document the code base, and improve performance. You can use `fresher` in the same manner as `fresh`.
 
 #### Configuration:
-- `fresh`'s configuration file was custom. `fresher` uses a YAML file. `fresher`'s configuration file is much easier to understand, use, and modify.
-- `fresh` did not allow for using build tags. `fresher` allows for this via the GoTags config file field or the `-tags` flag being passed through.
-- `fresh`'s configuration *will not* work with `fresher`. The config files are somewhat similar and can be translated.
+- `fresh`'s configuration file used a custom format. `fresher` uses YAML. `fresher`'s configuration file is much easier to understand, use, and modify.
+- `fresh` did not allow for using build tags. `fresher` allows for build tags via the GoTags configuration file field or the `-tags` flag being passed through.
+- `fresh`'s configuration *will not* work with `fresher`. The configuration files are, however, somewhat similar and can be translated.
 
 #### Improved Code:
 - `fresher` modernizes the codebase using the latest third-party libraries, latest Go features and standard library, and implements Go modules.
-- Code documentation is immensely better; `fresh` had near-zero code documentation`. This should help with future development and maintance. 
+- Code documentation is immensely better; `fresh` had near-zero code documentation. This should help with future development and maintance.
 
 #### Improved Performance:
 - `fresher` is a bit faster due to reduced build delays and faster rebuilds when a file change occurs during an ongoing build (the ongoing build is killed in `fresher`; `fresh` waited for the build to complete before rebuilding).
@@ -40,13 +40,13 @@ For more advanced usage, and customizing how `fresher` works, run `fresher -init
 - `fresher` uses one watcher goroutine instead of one goroutine per watched directory.
 
 
-# Config File Details:
+# Configuration File Details:
 
-Create a config file with the `fresher -init` command.
+Create a configuration file with the `fresher -init` command.
 
-Some config file fields can be overridden by flags to `fresher`.
-- GoTags is overridden by -tags.
-- Verbose is overridden by -verbose.
+Some configuration file fields can be overridden by flags to `fresher`.
+- GoTags is overridden by `-tags`.
+- Verbose is overridden by `-verbose`.
 
 | Field | Description | Default|
 |-------|-------------|--------|
