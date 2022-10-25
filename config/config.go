@@ -50,13 +50,20 @@ const DefaultConfigFileName = "fresher.conf"
 // expects fields to start with lower case characters. However, if we lower cased all
 // the struct field names, then we wouldn't be able to access those fields in other
 // packages.
+//
+// If adding or updating a field here, make sure to document it in README.md!
 type File struct {
 	//WorkingDir is the path to the working directory, the directory `go run` or
 	//`go build` would be executed in.
 	WorkingDir string `yaml:"WorkingDir"`
 
-	//EntryPoint is the path to the main package, which is passed to `go run` or
-	//`go build` commands. Defaults to '.'.
+	//EntryPoint is the relative path to directory where the "main" package is located
+	//based off the directory fresher is being run from.
+	//
+	//This really only needs to be modified if your "main" package is located in a
+	//subdirectory of your repo, such as "cmd/x". In this case, you cannot just run
+	//fresher in "cmd/x" since any file changes made outside of "cmd/x" would not be
+	//recognized and thus the binary will not be rebuild/rerun.
 	EntryPoint string `yaml:"EntryPoint"`
 
 	//TempDir is the directory off of WorkingDir where fresher will store the built
@@ -120,7 +127,9 @@ type File struct {
 	Verbose bool `yaml:"Verbose"`
 
 	//usingBuiltInDefaults is set to true only when File isn't actually read from a
-	//file and we are using the built in defaults instead.
+	//file and we are using the built in defaults instead. This is used to reduce
+	//diagnostic output (i.e.: path to config file) when a config file wasn't used
+	//since if a config file wasn't used, there is no path to log out!
 	usingBuiltInDefaults bool `yaml:"-"`
 }
 
@@ -149,10 +158,10 @@ func newDefaultConfig() (f *File) {
 		BuildDelayMilliseconds: 100,                        //100 is "instant" enough but helps catch CTRL+S being hit rapidly.
 		BuildName:              "fresher-build",            //could really be anything.
 		BuildLogFilename:       "fresher-build-errors.log", //could really be anything.
-		GoTags:                 "",
-		GoLdflags:              "-s -w", //probably unnecessary since the built binary shouldn't be used for production or distribution.
-		GoTrimpath:             true,    //probably unnecessary since the built binary shouldn't be used for production or distribution.
-		Verbose:                false,
+		GoTags:                 "",                         //will be overriden by flag to fresher.
+		GoLdflags:              "-s -w",                    //probably unnecessary since the built binary shouldn't be used for production or distribution.
+		GoTrimpath:             true,                       //probably unnecessary since the built binary shouldn't be used for production or distribution.
+		Verbose:                false,                      //will be overriden by flag to fresher.
 
 		usingBuiltInDefaults: true,
 	}

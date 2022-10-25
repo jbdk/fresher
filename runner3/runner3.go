@@ -382,10 +382,8 @@ func build(event fsnotify.Event) (err error) {
 		args = append(args, "-trimpath")
 	}
 
-	//Get path to entry point of app. This is typically just the repository root.
-	//Not naming a single "main.go" file allows for using any .go filename as the
-	//entry point, and using multiple .go files at once; go build figures this all
-	//out.
+	//Get path to entry point of app. This is typically just the repository root,
+	//but could be a subdirectory as well.
 	entryPoint := config.Data().EntryPoint
 
 	//Add the entry point to build the binary from.

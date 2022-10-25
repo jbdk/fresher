@@ -51,6 +51,7 @@ Some configuration file fields can be overridden by flags to `fresher`.
 | Field | Description | Default|
 |-------|-------------|--------|
 | WorkingDir | The directory `fresher` should operate on. | . |
+| EntryPoint | The relative path to the directory that holds the "main" package based off of the directory `fresher` is being run from. Typically this is "." meaning "main" is in the same directory as `fresher` is being run from. This really only needs to be used if your "main" package is in a subdirectory of your repo, such as "cmd/x". | . |
 | TempDir | The name of the directory of of WorkingDir that `fresher` uses for storing the built binary and error logs. | "tmp" |
 | ExtensionsToWatch | The types of files `fresher` will watch for changes. Typically just files used in a binary. | [".go", ".html"] |
 | NoRebuildExtensions | The types of files `fresher` will just rerun, not rebuild, the binary on upon a file change occuring. Typically this includes files that are read and cached by a running binary (for example, HTML templates via the `html/template` package), but not included in the binary. Caution if you use embedded files! | [".html"] |
@@ -79,3 +80,12 @@ We assume the build & run method was used since:
 - Is `go run` really any faster than `go build`?
 
 
+# Contributing:
+- `gofmt` is required.
+- `staticcheck` is required and must return no warnings.
+- Try to keep code style as similar as possible.
+- Comment lines are ~85 characters long.
+- All tests must pass.
+- Total code coverage isn't of utmost performance, although raising coverage is nice.
+- Performance is important. Performance (speed of recognizing file change events and rebuilding) should never degrade.
+- Code comments/documentation should always try to answer "why" something was done. Expect the reader to not understand much.
