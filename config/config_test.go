@@ -22,6 +22,15 @@ func TestValidate(t *testing.T) {
 	}
 	cfg.WorkingDir = "."
 
+	//Edit the config to break things.
+	cfg.EntryPoint = ""
+	err = cfg.validate()
+	if err == nil {
+		t.Fatal("Error about bad EntryPoint should have been returned.")
+		return
+	}
+	cfg.EntryPoint = "."
+
 	//Test defaults being set.
 	cfg.TempDir = ""
 	err = cfg.validate()
