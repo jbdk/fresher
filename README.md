@@ -13,7 +13,7 @@ Run `go install github.com/c9845/fresher@latest`.
 # Usage:
 Run `fresher` in the same directory as you would run `go run`.
 
-For more advanced usage, and customizing how `fresher` works, run `fresher -init` to create a config file in the current directory. The config file is pretty self-explainatory, however, see the [config file description](#config-file-details) below for more details.
+For more advanced usage, and customizing how `fresher` works, run `fresher -init` to create a config file in the current directory. The config file is pretty self-explainatory, however, see the [config file description](#configuration-file-details) below for more details.
 
 
 # How `fresher` Works:
