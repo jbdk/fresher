@@ -423,15 +423,18 @@ func build(event fsnotify.Event) (err error) {
 	//buildKilled is used to return a specific error when a build is killed.
 	cancelKiller := make(chan bool, 1)
 	buildKilled := false
-	go func(eventsLogger, errorLogger coloredLogger, c *exec.Cmd) {
+	go func() {
 		select {
 		case x := <-killBuildingChan:
 			if x {
-				errorLogger.Printf("Building...killed")
+				eventsX := newLogger("fresherX", "magenta")
+				errorsX := newLogger("fresherX", "yellow")
 
-				err := c.Process.Kill()
+				eventsX.Printf("Building...killed")
+
+				err := cmd.Process.Kill()
 				if err != nil {
-					errorLogger.Printf("Killing build error %s", err)
+					errorsX.Printf("Killing build error %s", err)
 				}
 
 				buildKilled = true
@@ -441,7 +444,7 @@ func build(event fsnotify.Event) (err error) {
 			//Terminate this goroutine since build was completed. This was we don't
 			//end up with endlessly running goroutines.
 		}
-	}(events, errs, cmd)
+	}()
 
 	//Run the command, go build...
 	buildCmdRunning = true
