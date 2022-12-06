@@ -427,14 +427,14 @@ func build(event fsnotify.Event) (err error) {
 		select {
 		case x := <-killBuildingChan:
 			if x {
-				eventsX := newLogger("fresherX", "magenta")
-				errorsX := newLogger("fresherX", "yellow")
-
-				eventsX.Printf("Building...killed")
+				//Not using errs/warn/events logger here on purpose. I think it causes
+				//a panic when fresher is left running, a computer sleeps, and then
+				//wakes back up. Using log.Println() seems to alleviate the issue.
+				log.Println("Building...killed")
 
 				err := cmd.Process.Kill()
 				if err != nil {
-					errorsX.Printf("Killing build error %s", err)
+					log.Printf("Killing build error %s", err)
 				}
 
 				buildKilled = true
