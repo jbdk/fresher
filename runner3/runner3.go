@@ -544,6 +544,9 @@ func run() {
 	} else {
 		events.Printf("Running...")
 	}
+	if len(config.Data().Args) > 0 {
+		cmd.Args = append(cmd.Args, config.Data().Args...)
+	}
 
 	//Set up logging for when the command runs. We want to capture the output logging
 	//and output it to the user running fresher. This is so the user can see any output

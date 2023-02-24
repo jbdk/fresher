@@ -66,6 +66,9 @@ type File struct {
 	//recognized and thus the binary will not be rebuild/rerun.
 	EntryPoint string `yaml:"EntryPoint"`
 
+	//Args is the list of arguments to pass to the binary when it is run.
+	Args []string `yaml:"Args"`
+
 	//TempDir is the directory off of WorkingDir where fresher will store the built
 	//binary, that will be run, and error logs.
 	TempDir string `yaml:"TempDir"`
